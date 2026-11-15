@@ -26,7 +26,7 @@ final class SwitcherPanel: NSPanel {
     private var items: [ItemView] = []
     private var names: [String] = []
     private var hasWindows: [Bool] = []
-    private var pids: [pid_t] = []
+    private var previewWindows: [CGWindowID?] = []
     /// Cell sizes in preview mode: the selected app's and the others'.
     private var largeCell = NSSize.zero
     private var smallCell = NSSize.zero
@@ -61,8 +61,8 @@ final class SwitcherPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    /// With `snapshots` (keyed by pid), apps are shown as previews; apps without a snapshot yet show their icon.
-    func show(entries: [SwitcherEntry], selected: Int, snapshots: [pid_t: CGImage]? = nil) {
+    /// With `snapshots` (keyed by window), entries are shown as previews; entries without a snapshot yet show their icon.
+    func show(entries: [SwitcherEntry], selected: Int, snapshots: [CGWindowID: CGImage]? = nil) {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         let visible = screen.visibleFrame
@@ -102,15 +102,20 @@ final class SwitcherPanel: NSPanel {
         items = entries.enumerated().map { index, entry in
             let item = ItemView(icon: entry.app.icon, dimmed: !entry.hasWindows, inset: Self.iconInset, index: index,
                                 showsPreview: showsPreviews)
-            item.snapshot = snapshots?[entry.app.processIdentifier]
+            item.snapshot = entry.previewWindow.flatMap { snapshots?[$0] }
             item.onHover = { [weak self] in self?.onHover?($0) }
             item.onClick = { [weak self] in self?.onClick?($0) }
             background.addSubview(item)
             return item
         }
-        names = entries.map { $0.app.localizedName ?? "" }
+        // A window is named by its app and title.
+        names = entries.map { entry in
+            let app = entry.app.localizedName ?? ""
+            guard let title = entry.window?.title, !title.isEmpty, title != app else { return app }
+            return "\(app) – \(title)"
+        }
         hasWindows = entries.map(\.hasWindows)
-        pids = entries.map(\.app.processIdentifier)
+        previewWindows = entries.map(\.previewWindow)
 
         setFrame(NSRect(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2,
                         width: size.width, height: size.height), display: false)
@@ -118,9 +123,11 @@ final class SwitcherPanel: NSPanel {
         orderFrontRegardless()
     }
 
-    func setSnapshot(_ image: CGImage, for pid: pid_t) {
-        guard showsPreviews, let index = pids.firstIndex(of: pid) else { return }
-        items[index].snapshot = image
+    func setSnapshot(_ image: CGImage, forWindow id: CGWindowID) {
+        guard showsPreviews else { return }
+        for (item, window) in zip(items, previewWindows) where window == id {
+            item.snapshot = image
+        }
     }
 
     func select(_ index: Int) {

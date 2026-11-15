@@ -14,6 +14,8 @@ final class DockPreviewController {
     private static let tabHoverDelay: TimeInterval = 0.15
     /// Time for the app to draw a newly selected tab before it is captured.
     private static let tabDrawDelay: TimeInterval = 0.3
+    /// Time for the app to close a window or tab before the preview is listed again.
+    private static let closeDelay: TimeInterval = 0.4
 
     var isEnabled = false {
         didSet {
@@ -27,7 +29,7 @@ final class DockPreviewController {
     private var accessibilityGranted = false
     private var isAttached = false
     private var hovered: DockItem?
-    private var shown: (app: NSRunningApplication, windows: [WindowInfo])?
+    private var shown: (app: NSRunningApplication, windows: [WindowInfo], iconFrame: NSRect)?
     /// After a click on the icon, its preview stays closed until the pointer moves to another icon.
     private var suppressedPid: pid_t?
     private var pendingShow: DispatchWorkItem?
@@ -50,6 +52,8 @@ final class DockPreviewController {
         panel.onWindowClick = { [weak self] in self?.focus(window: $0, tab: nil) }
         panel.onTabClick = { [weak self] in self?.focus(window: $0, tab: $1) }
         panel.onTabHover = { [weak self] in self?.tabHovered(window: $0, tab: $1) }
+        panel.onWindowClose = { [weak self] in self?.close(window: $0, tab: nil) }
+        panel.onTabClose = { [weak self] in self?.close(window: $0, tab: $1) }
     }
 
     /// Call once Accessibility access is granted; observing the Dock needs it.
@@ -104,13 +108,45 @@ final class DockPreviewController {
             DispatchQueue.main.async {
                 guard let self, current == self.generation,
                       self.hovered?.app.processIdentifier == app.processIdentifier else { return }
-                guard !windows.isEmpty else { return self.hide() }
-                self.shown = (app, windows)
                 // The icon may have moved since it was hovered, for one while the Dock was still sliding in.
                 let iconFrame = self.dock.currentItem().flatMap { $0.app == app ? $0.frame : nil } ?? item.frame
-                self.panel.show(app: app, windows: windows, thumbnails: self.thumbnails, beside: iconFrame)
-                self.startPointerChecks()
-                self.captureThumbnails(of: windows, generation: current)
+                self.present(app: app, windows: windows, iconFrame: iconFrame, generation: current)
+            }
+        }
+    }
+
+    private func present(app: NSRunningApplication, windows: [WindowInfo], iconFrame: NSRect, generation current: Int) {
+        guard !windows.isEmpty else { return hide() }
+        shown = (app, windows, iconFrame)
+        panel.show(app: app, windows: windows, thumbnails: thumbnails, beside: iconFrame)
+        startPointerChecks()
+        captureThumbnails(of: windows, generation: current)
+    }
+
+    /// Closes the window, or with `tab` that tab, then lists the app's windows again in the open preview.
+    private func close(window index: Int, tab tabIndex: Int?) {
+        guard let shown, shown.windows.indices.contains(index) else { return }
+        let window = shown.windows[index]
+        pendingTabSelect?.cancel()
+        if let tabIndex, window.tabs.indices.contains(tabIndex) {
+            let tab = window.tabs[tabIndex]
+            if !AppWindows.close(tab) { log.error("Tab \(tab.title, privacy: .public) has no close button") }
+            // The closed tab is gone; whatever the app selects next stays.
+            originalTabs[window.id] = nil
+            hoverSelectedTabs[window.id] = nil
+        } else {
+            if !AppWindows.close(window) { log.error("Window \(window.id) has no close button") }
+            originalTabs[window.id] = nil
+            hoverSelectedTabs[window.id] = nil
+        }
+        generation += 1
+        let current = generation
+        let app = shown.app, iconFrame = shown.iconFrame
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + Self.closeDelay) { [weak self] in
+            let windows = AppWindows.windows(of: app)
+            DispatchQueue.main.async {
+                guard let self, current == self.generation, self.panel.isVisible else { return }
+                self.present(app: app, windows: windows, iconFrame: iconFrame, generation: current)
             }
         }
     }

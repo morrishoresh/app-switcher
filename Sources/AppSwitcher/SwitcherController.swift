@@ -27,6 +27,8 @@ final class SwitcherController {
     var showsAppsWithoutWindows = false
     /// Show each app as a snapshot of its front window instead of its icon.
     var showsPreviews = false
+    /// List an app's windows one by one instead of the app once.
+    var showsEachWindow = true
 
     private let tracker: AppTracker
     private let panel = SwitcherPanel()
@@ -36,8 +38,8 @@ final class SwitcherController {
     private var pendingShow: DispatchWorkItem?
     /// Key-ups are swallowed only for keys whose key-down was swallowed.
     private var swallowedKeys = Set<Int>()
-    /// Last snapshot of each app's front window; covers apps whose windows cannot be captured now (minimized, hidden).
-    private var snapshots: [pid_t: CGImage] = [:]
+    /// Last snapshot of each listed window; covers windows that cannot be captured now (minimized, hidden).
+    private var snapshots: [CGWindowID: CGImage] = [:]
     private var session = 0
     private var isCommandDown = false
     private var commandDownAt = Date.distantPast
@@ -117,11 +119,12 @@ final class SwitcherController {
     }
 
     private func begin(backward: Bool) {
-        entries = tracker.entries(includeWindowless: showsAppsWithoutWindows)
+        if showsEachWindow { tracker.noteFrontmostWindow() }
+        entries = tracker.entries(includeWindowless: showsAppsWithoutWindows, eachWindow: showsEachWindow)
         guard !entries.isEmpty else { return }
         session += 1
-        let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
-        snapshots = snapshots.filter { running.contains($0.key) }
+        let listed = Set(entries.compactMap(\.previewWindow))
+        snapshots = snapshots.filter { listed.contains($0.key) }
         let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
         if backward {
             selected = entries.count - 1
@@ -156,7 +159,10 @@ final class SwitcherController {
     }
 
     private func quitSelected() {
-        entries.remove(at: selected).app.terminate()
+        let app = entries[selected].app
+        app.terminate()
+        // With each window listed, the app's other windows go too.
+        entries.removeAll { $0.app.processIdentifier == app.processIdentifier }
         guard !entries.isEmpty else { return end() }
         selected = min(selected, entries.count - 1)
         if panel.isVisible {
@@ -170,19 +176,15 @@ final class SwitcherController {
 
     /// Captures each listed app's front window and fills the snapshots in as they arrive.
     private func captureSnapshots(session current: Int) {
-        let front = WindowScanner.frontWindows()
-        var pidByWindow: [CGWindowID: pid_t] = [:]
-        for entry in entries {
-            if let id = front[entry.app.processIdentifier] { pidByWindow[id] = entry.app.processIdentifier }
-        }
+        // Windows on no Space (minimized, hidden) cannot be captured; they keep their last snapshot.
+        let ids = Set(entries.compactMap { entry in entry.window.map { $0.isOnSpace ? $0.id : nil } ?? entry.previewWindow })
         let scale = panel.screen?.backingScaleFactor ?? 2
         Task { @MainActor [weak self] in
-            let images = await Thumbnailer.capture(ids: Set(pidByWindow.keys), maxSize: SwitcherPanel.previewSize, scale: scale)
+            let images = await Thumbnailer.capture(ids: ids, maxSize: SwitcherPanel.previewSize, scale: scale)
             guard let self else { return }
             for (id, image) in images {
-                guard let pid = pidByWindow[id] else { continue }
-                self.snapshots[pid] = image
-                if self.isActive, current == self.session { self.panel.setSnapshot(image, for: pid) }
+                self.snapshots[id] = image
+                if self.isActive, current == self.session { self.panel.setSnapshot(image, forWindow: id) }
             }
         }
     }
@@ -191,7 +193,9 @@ final class SwitcherController {
         guard isActive, entries.indices.contains(selected) else { return end() }
         let entry = entries[selected]
         end()
-        if entry.hasWindows {
+        if let window = entry.window {
+            AppWindows.focus(window, of: entry.app)
+        } else if entry.hasWindows {
             activate(entry.app, restoreMinimized: restoreMinimized)
         } else {
             openNewWindow(entry.app)

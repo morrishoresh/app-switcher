@@ -5,6 +5,8 @@ final class DockPreviewPanel: NSPanel {
     var onWindowClick: ((Int) -> Void)?
     var onTabClick: ((_ window: Int, _ tab: Int) -> Void)?
     var onTabHover: ((_ window: Int, _ tab: Int) -> Void)?
+    var onWindowClose: ((Int) -> Void)?
+    var onTabClose: ((_ window: Int, _ tab: Int) -> Void)?
 
     /// Set from the menu-bar menu.
     static var thumbnailSize = CGSize(width: 220, height: 138)
@@ -74,6 +76,8 @@ final class DockPreviewPanel: NSPanel {
             card.onClick = { [weak self] in self?.onWindowClick?(index) }
             card.onTabClick = { [weak self] in self?.onTabClick?(index, $0) }
             card.onTabHover = { [weak self] in self?.onTabHover?(index, $0) }
+            card.onClose = { [weak self] in self?.onWindowClose?(index) }
+            card.onTabClose = { [weak self] in self?.onTabClose?(index, $0) }
             background.addSubview(card)
             return card
         }
@@ -124,8 +128,16 @@ final class DockPreviewPanel: NSPanel {
 private class HoverView: NSView {
     var onClick: (() -> Void)?
     var cornerRadius: CGFloat = 8
-    private var isHovered = false {
-        didSet { if isHovered != oldValue { needsDisplay = true } }
+    /// Shown only while the pointer is on this view, such as its close button.
+    var revealedOnHover: NSView? {
+        didSet { revealedOnHover?.isHidden = !isHovered }
+    }
+    private(set) var isHovered = false {
+        didSet {
+            guard isHovered != oldValue else { return }
+            needsDisplay = true
+            revealedOnHover?.isHidden = !isHovered
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -160,6 +172,8 @@ private class HoverView: NSView {
 private final class CardView: HoverView {
     var onTabClick: ((Int) -> Void)?
     var onTabHover: ((Int) -> Void)?
+    var onClose: (() -> Void)?
+    var onTabClose: ((Int) -> Void)?
 
     private static let padding: CGFloat = 6
     private static let titleHeight: CGFloat = 18
@@ -219,6 +233,7 @@ private final class CardView: HoverView {
                                  title: tab.title, isSelected: tab.isSelected)
             row.onClick = { [weak self] in self?.onTabClick?(index) }
             row.onEnter = { [weak self] in self?.onTabHover?(index) }
+            row.onClose = { [weak self] in self?.onTabClose?(index) }
             addSubview(row)
             rowTop -= Self.tabHeight
         }
@@ -229,6 +244,14 @@ private final class CardView: HoverView {
             more.frame = NSRect(x: p + 16, y: rowTop - Self.tabHeight + 3, width: thumbnail.width - 20, height: 15)
             addSubview(more)
         }
+
+        // Added last, so it is on top of the snapshot.
+        // Top left, where the system puts it in a window.
+        let close = CloseButton(frame: NSRect(x: 8, y: frame.height - 8 - CloseButton.size,
+                                              width: CloseButton.size, height: CloseButton.size))
+        close.onClick = { [weak self] in self?.onClose?() }
+        addSubview(close)
+        revealedOnHover = close
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -247,6 +270,8 @@ private final class CardView: HoverView {
 }
 
 private final class TabRowView: HoverView {
+    var onClose: (() -> Void)?
+
     init(frame: NSRect, title: String, isSelected: Bool) {
         super.init(frame: frame)
         cornerRadius = 5
@@ -258,9 +283,56 @@ private final class TabRowView: HoverView {
         label.font = .systemFont(ofSize: 11, weight: isSelected ? .semibold : .regular)
         label.textColor = isSelected ? .labelColor : .secondaryLabelColor
         label.lineBreakMode = .byTruncatingTail
-        label.frame = NSRect(x: 16, y: 2, width: frame.width - 20, height: 16)
+        label.frame = NSRect(x: 16, y: 2, width: frame.width - 22 - CloseButton.size, height: 16)
         addSubview(label)
+        let size = CloseButton.size
+        let close = CloseButton(frame: NSRect(x: frame.width - 3 - size, y: (frame.height - size) / 2, width: size, height: size))
+        close.onClick = { [weak self] in self?.onClose?() }
+        addSubview(close)
+        revealedOnHover = close
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+}
+
+/// The system window close button, so it follows the current appearance. It draws its active, hovered look (× on red)
+/// only while the pointer is reported to be over its button group, which `_mouseInGroup:` on its superview answers.
+/// Clicks are taken here rather than by the button, since the panel never becomes key.
+private final class CloseButton: HoverView {
+    static let size: CGFloat = 14
+
+    private let button = NSWindow.standardWindowButton(.closeButton, for: [.titled, .closable])
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        if let button {
+            button.frame = NSRect(x: (frame.width - button.frame.width) / 2, y: (frame.height - button.frame.height) / 2,
+                                  width: button.frame.width, height: button.frame.height)
+            addSubview(button)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    @objc func _mouseInGroup(_ button: NSButton) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        super.hitTest(point) == nil ? nil : self
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard button == nil else { return }
+        // Without the system button: a red circle with a dark ×.
+        NSColor.systemRed.setFill()
+        NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5)).fill()
+        let arm = bounds.width * 0.2
+        let cross = NSBezierPath()
+        cross.move(to: NSPoint(x: bounds.midX - arm, y: bounds.midY - arm))
+        cross.line(to: NSPoint(x: bounds.midX + arm, y: bounds.midY + arm))
+        cross.move(to: NSPoint(x: bounds.midX - arm, y: bounds.midY + arm))
+        cross.line(to: NSPoint(x: bounds.midX + arm, y: bounds.midY - arm))
+        cross.lineWidth = 1.5
+        NSColor.black.withAlphaComponent(0.6).setStroke()
+        cross.stroke()
+    }
 }

@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let showWindowlessKey = "showAppsWithoutWindows"
     private static let dockPreviewsKey = "dockPreviews"
     private static let switcherPreviewsKey = "switcherPreviews"
+    private static let eachWindowKey = "switcherEachWindow"
+    private let eachWindowItem = NSMenuItem(title: "Show Each Window Separately", action: #selector(toggleEachWindow), keyEquivalent: "")
     private static let switcherPreviewWidthKey = "switcherPreviewWidth"
     private static let switcherOthersScaleKey = "switcherOthersScale"
     private static let dockPreviewWidthKey = "dockPreviewWidth"
@@ -48,9 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.register(defaults: [Self.enabledKey: true, Self.showWindowlessKey: false, Self.dockPreviewsKey: true,
                                                   Self.switcherPreviewsKey: false, Self.switcherPreviewWidthKey: 320.0,
                                                   Self.switcherOthersScaleKey: 0.6, Self.dockPreviewWidthKey: 220.0,
-                                                  Self.appsPerRowKey: 0.0])
+                                                  Self.appsPerRowKey: 0.0, Self.eachWindowKey: true])
         controller.showsAppsWithoutWindows = UserDefaults.standard.bool(forKey: Self.showWindowlessKey)
         controller.showsPreviews = UserDefaults.standard.bool(forKey: Self.switcherPreviewsKey)
+        controller.showsEachWindow = UserDefaults.standard.bool(forKey: Self.eachWindowKey)
         dockPreview.isEnabled = UserDefaults.standard.bool(forKey: Self.dockPreviewsKey)
         if dockPreview.isEnabled || controller.showsPreviews { requestScreenRecording() }
         eventTap.isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
@@ -87,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         enabledItem.target = self
         showWindowlessItem.target = self
         switcherPreviewsItem.target = self
+        eachWindowItem.target = self
+        eachWindowItem.indentationLevel = 1
         dockPreviewsItem.target = self
         screenRecordingItem.target = self
         // Each feature is turned on and off on its own, with its settings indented below it.
@@ -95,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switcherPreviewsItem.indentationLevel = 1
         menu.addItem(enabledItem)
         menu.addItem(statusLine)
+        menu.addItem(eachWindowItem)
         menu.addItem(showWindowlessItem)
         menu.addItem(switcherPreviewsItem)
         menu.addItem(settingMenu("Selected Preview Size", key: Self.switcherPreviewWidthKey,
@@ -166,6 +172,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.set(controller.showsAppsWithoutWindows, forKey: Self.showWindowlessKey)
     }
 
+    @objc private func toggleEachWindow() {
+        controller.showsEachWindow.toggle()
+        UserDefaults.standard.set(controller.showsEachWindow, forKey: Self.eachWindowKey)
+    }
+
     @objc private func toggleSwitcherPreviews() {
         controller.showsPreviews.toggle()
         UserDefaults.standard.set(controller.showsPreviews, forKey: Self.switcherPreviewsKey)
@@ -195,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         showWindowlessItem.state = controller.showsAppsWithoutWindows ? .on : .off
         switcherPreviewsItem.state = controller.showsPreviews ? .on : .off
+        eachWindowItem.state = controller.showsEachWindow ? .on : .off
         for item in choiceItems {
             guard let choice = item.representedObject as? SettingChoice else { continue }
             item.state = UserDefaults.standard.double(forKey: choice.key) == choice.value ? .on : .off

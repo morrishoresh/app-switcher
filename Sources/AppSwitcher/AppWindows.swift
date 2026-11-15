@@ -44,12 +44,16 @@ enum AppWindows {
         "AXWebArea", "AXScrollArea", "AXTable", "AXOutline", "AXBrowser", "AXTextArea", "AXList",
     ]
 
-    /// Windows on any Space front to back, then minimized windows and windows of a hidden app.
-    static func windows(of app: NSRunningApplication) -> [WindowInfo] {
+    /// Windows on any Space front to back, then minimized windows and windows of a hidden app. `spaceWindows` is
+    /// `WindowScanner.windowsInSpaces()`, passed in when listing several apps; without `includeTabs`, tabs are left
+    /// empty, which skips the slowest Accessibility calls.
+    static func windows(of app: NSRunningApplication, spaceWindows: [[String: Any]]? = nil,
+                        includeTabs: Bool = true) -> [WindowInfo] {
         let pid = app.processIdentifier
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, axTimeout)
-        if enableAccessibility(of: app, appElement) {
+        let listTabs: (AXUIElement) -> [TabInfo] = includeTabs ? Self.tabs(of:) : { _ in [] }
+        if includeTabs, enableAccessibility(of: app, appElement) {
             // Firefox builds its accessibility tree asynchronously after being asked to.
             Thread.sleep(forTimeInterval: accessibilityStartDelay)
         }
@@ -58,7 +62,7 @@ enum AppWindows {
             windowID(of: window).map { (id: $0, element: window) }
         }
         var axByID = Dictionary(axWindows.map { ($0.id, $0.element) }, uniquingKeysWith: { first, _ in first })
-        let spaceEntries = WindowScanner.windowsInSpaces().filter { $0[kCGWindowOwnerPID as String] as? pid_t == pid }
+        let spaceEntries = (spaceWindows ?? WindowScanner.windowsInSpaces()).filter { $0[kCGWindowOwnerPID as String] as? pid_t == pid }
 
         // Windows on other Spaces are missing from the list; without their elements there are no tabs and no AXRaise,
         // and macOS switches Space only on AXRaise. A failed list means the app is not answering, so skip the search.
@@ -78,7 +82,7 @@ enum AppWindows {
                 isMinimized: false,
                 isOnSpace: true,
                 element: element,
-                tabs: element.map(tabs(of:)) ?? []
+                tabs: element.map(listTabs) ?? []
             ))
         }
 
@@ -96,7 +100,7 @@ enum AppWindows {
                 isMinimized: minimized,
                 isOnSpace: false,
                 element: element,
-                tabs: tabs(of: element)
+                tabs: listTabs(element)
             ))
         }
         return result
@@ -131,6 +135,36 @@ enum AppWindows {
         AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
         log.info("Requested accessibility from \(app.localizedName ?? "", privacy: .public)")
         return true
+    }
+
+    /// Presses the window's close button. Returns false when it has none.
+    @discardableResult
+    static func close(_ window: WindowInfo) -> Bool {
+        guard let element = window.element, let button = attribute(element, kAXCloseButtonAttribute),
+              CFGetTypeID(button) == AXUIElementGetTypeID() else { return false }
+        return AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success
+    }
+
+    /// Presses the close button inside the tab. Returns false when it has none.
+    @discardableResult
+    static func close(_ tab: TabInfo) -> Bool {
+        guard let button = closeButton(in: tab.element, depth: 0) else { return false }
+        return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+    }
+
+    /// A tab's close button: a button marked as a close button, or described as one ("Close Tab" in Firefox and Safari).
+    private static func closeButton(in element: AXUIElement, depth: Int) -> AXUIElement? {
+        guard depth < 3 else { return nil }
+        for child in attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+            if attribute(child, kAXRoleAttribute) as? String == kAXButtonRole {
+                let subrole = attribute(child, kAXSubroleAttribute) as? String
+                let text = [kAXDescriptionAttribute, kAXTitleAttribute, kAXHelpAttribute]
+                    .compactMap { attribute(child, $0) as? String }.joined(separator: " ").lowercased()
+                if subrole == kAXCloseButtonSubrole || text.contains("close") { return child }
+            }
+            if let found = closeButton(in: child, depth: depth + 1) { return found }
+        }
+        return nil
     }
 
     /// Brings the window to the front, switching Space if needed; with `tab`, selects that tab first.
@@ -197,6 +231,15 @@ enum AppWindows {
                 return tabButtons(in: child, depth: depth + 1)
             }
         }
+    }
+
+    /// The app's focused window.
+    static func focusedWindowID(of pid: pid_t) -> CGWindowID? {
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, axTimeout)
+        guard let window = attribute(appElement, kAXFocusedWindowAttribute), CFGetTypeID(window) == AXUIElementGetTypeID()
+        else { return nil }
+        return windowID(of: window as! AXUIElement)
     }
 
     private static func windowID(of window: AXUIElement) -> CGWindowID? {

@@ -23,8 +23,8 @@ enum WindowScanner {
     private static let fullScreenSpaceType = 4
 
     /// Of the given pids, those that own at least one window: placed on any Space, minimized, or belonging to a hidden app.
-    static func pidsWithWindows(among pids: [pid_t]) -> Set<pid_t> {
-        var found = pidsWithWindowsInSpaces()
+    static func pidsWithWindows(among pids: [pid_t], spaceWindows: [[String: Any]]? = nil) -> Set<pid_t> {
+        var found = spaceWindows.map { Set($0.compactMap { $0[kCGWindowOwnerPID as String] as? pid_t }) } ?? pidsWithWindowsInSpaces()
         // Minimized windows and windows of hidden apps are on no Space; Accessibility still lists them.
         let rest = pids.filter { !found.contains($0) }
         var hits = [Bool](repeating: false, count: rest.count)
@@ -40,9 +40,9 @@ enum WindowScanner {
     }
 
     /// Each app's frontmost window placed on any Space.
-    static func frontWindows() -> [pid_t: CGWindowID] {
+    static func frontWindows(in spaceWindows: [[String: Any]]? = nil) -> [pid_t: CGWindowID] {
         var front: [pid_t: CGWindowID] = [:]
-        for window in windowsInSpaces() {
+        for window in spaceWindows ?? windowsInSpaces() {
             guard let pid = window[kCGWindowOwnerPID as String] as? pid_t,
                   let id = window[kCGWindowNumber as String] as? CGWindowID, front[pid] == nil else { continue }
             front[pid] = id

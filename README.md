@@ -23,6 +23,10 @@ Same as the built-in switcher:
 - hovering selects, clicking switches
 - tap ⌘, then press it again within 0.35 s and hold it: ⌘⇥ opens the built-in switcher for that press
 
+## Each window separately
+
+With Show Each Window Separately (menu-bar menu, under ⌘⇥ Switcher, on by default) on, every window is its own entry, named by its app and title, most recently focused first; switching to one brings that window to the front, switching Space and restoring it if minimized. Window focus is seen when an app activates and when the switcher opens, so windows changed within an app (⌘`, a click) move up only then. Q quits the window's app, removing all its windows.
+
 ## Apps without windows
 
 With Show Apps Without Windows (menu-bar menu) on, they are listed too, faded, in the same most-recently-used order. Switching to one opens a new window, as clicking its Dock icon does.
@@ -35,7 +39,7 @@ Icons are the size of the built-in switcher's icons (128 pt), and previews of ap
 
 ## Dock previews
 
-With Dock Previews (menu-bar menu, on by default) on, resting the pointer on a running app's Dock icon shows its windows next to the icon: a snapshot of each, its title, and the tabs of windows that have a tab bar (Finder, Terminal, Safari, Firefox, and other apps with standard tabs). Clicking a window brings it to the front, switching Space if needed; clicking a tab selects it first. Resting the pointer on a tab title selects that tab in the app and shows its snapshot, since apps draw only the selected tab; when the preview closes without a click, each window goes back to the tab it had. Minimized windows are listed after the others and are restored when clicked. Preview Size (under Dock Previews) sets the snapshot size.
+With Dock Previews (menu-bar menu, on by default) on, resting the pointer on a running app's Dock icon shows its windows next to the icon: a snapshot of each, its title, and the tabs of windows that have a tab bar (Finder, Terminal, Safari, Firefox, and other apps with standard tabs). Clicking a window brings it to the front, switching Space if needed; clicking a tab selects it first. The close button (the system's red window button) that appears on the window or tab under the pointer closes that window or tab. Resting the pointer on a tab title selects that tab in the app and shows its snapshot, since apps draw only the selected tab; when the preview closes without a click, each window goes back to the tab it had. Minimized windows are listed after the others and are restored when clicked. Preview Size (under Dock Previews) sets the snapshot size.
 
 Snapshots need Screen Recording access (System Settings › Privacy & Security › Screen Recording), asked for when previews are first turned on; without it, previews show the app icon in place of each snapshot. Minimized windows and windows of a hidden app show their last snapshot, or the app icon if none was taken yet.
 
