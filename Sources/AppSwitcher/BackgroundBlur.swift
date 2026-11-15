@@ -24,6 +24,10 @@ final class BackgroundBlur {
     var isGrayscale = false {
         didSet { applyEffect() }
     }
+    /// Also blur the desktop behind the windows.
+    var blursDesktop = false {
+        didSet { update() }
+    }
 
     private var windows: [NSWindow] = []
     /// UUID of the display each of `windows` covers.
@@ -102,7 +106,7 @@ final class BackgroundBlur {
         }
         // The desktop is not blurred, only the windows behind the front app's.
         let behind = BlurWindow.appWindowFrames(normal[(last + 1)...])
-        shown.forEach { BlurWindow.limit($0, to: behind) }
+        shown.forEach { BlurWindow.limit($0, to: behind, desktop: blursDesktop ? $0.frame : nil) }
         let isInPlace = normal.count >= last + 1 + shown.count
             && normal[(last + 1)...].prefix(shown.count).allSatisfy { pid($0) == ownPID }
         guard !isInPlace, let target = normal[last][kCGWindowNumber as String] as? Int else { return }
@@ -119,6 +123,8 @@ final class ScreenBlur {
     var radius: Double = 20
     /// Also remove the color of the blurred windows.
     var isGrayscale = false
+    /// Also blur the desktop behind the windows.
+    var blursDesktop = false
     private var windows: [NSWindow] = []
 
     func show(below level: NSWindow.Level) {
@@ -129,7 +135,8 @@ final class ScreenBlur {
             let window = BlurWindow.make(for: screen, onFullScreenSpaces: true)
             window.level = NSWindow.Level(level.rawValue - 1)
             BlurWindow.setEffect(of: window, radius: radius, grayscale: isGrayscale)
-            BlurWindow.limit(window, to: frames)
+            // The menu bar and the Dock stay sharp.
+            BlurWindow.limit(window, to: frames, desktop: blursDesktop ? screen.visibleFrame : nil)
             window.orderFrontRegardless()
             return window
         }
@@ -150,7 +157,7 @@ private extension NSScreen {
     }
 }
 
-/// A click-through window covering a screen that blurs what is behind it, only inside its `BlurMask` rects.
+/// A click-through window covering a screen that blurs what is behind it, only inside its `BlurMask` area.
 private enum BlurWindow {
     static func make(for screen: NSScreen, onFullScreenSpaces: Bool) -> NSWindow {
         let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
@@ -187,17 +194,18 @@ private enum BlurWindow {
     }
 
     /// Limits the blur of `window` to `frames`, given in window-server coordinates (origin at the top left of the main
-    /// display, y down).
-    static func limit(_ window: NSWindow, to frames: [CGRect]) {
+    /// display, y down), and `desktop`, given in screen coordinates.
+    static func limit(_ window: NSWindow, to frames: [CGRect], desktop: NSRect?) {
         guard let mask = window.contentView as? BlurMask, let mainHeight = NSScreen.screens.first?.frame.height else { return }
         let origin = window.frame.origin
-        mask.rects = frames
+        let windows = frames
             .map { CGRect(x: $0.minX - origin.x, y: mainHeight - $0.maxY - origin.y, width: $0.width, height: $0.height) }
             .filter { $0.intersects(mask.bounds) }
+        mask.area = BlurMask.Area(windows: windows, desktop: desktop?.offsetBy(dx: -origin.x, dy: -origin.y))
     }
 }
 
-/// Blurs (and optionally grays) what is behind the window, only inside `rects`, through a private Core Animation
+/// Blurs (and optionally grays) what is behind the window, only inside `area`, through a private Core Animation
 /// backdrop layer, as `NSVisualEffectView` does.
 private final class BlurMask: NSView {
     /// About the corner radius of windows, so the desktop next to a window's corner is not blurred.
@@ -206,13 +214,20 @@ private final class BlurMask: NSView {
     private let backdrop: CALayer? = (NSClassFromString("CABackdropLayer") as? CALayer.Type)?.init()
     private let shape = CAShapeLayer()
 
-    var rects: [NSRect] = [] {
+    struct Area: Equatable {
+        /// Window frames, drawn with rounded corners.
+        var windows: [NSRect] = []
+        var desktop: NSRect?
+    }
+
+    var area = Area() {
         didSet {
-            guard rects != oldValue else { return }
+            guard area != oldValue else { return }
             let path = CGMutablePath()
-            for rect in rects {
+            for rect in area.windows {
                 path.addRoundedRect(in: rect, cornerWidth: Self.cornerRadius, cornerHeight: Self.cornerRadius)
             }
+            if let desktop = area.desktop { path.addRect(desktop) }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             shape.path = path
@@ -239,7 +254,8 @@ private final class BlurMask: NSView {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     func setEffect(radius: Double, grayscale: Bool) {
-        var filters = [Self.filter("gaussianBlur", ["inputRadius": radius])]
+        // Without normalized edges the blur fades out toward the screen edges, letting the sharp, colored desktop show.
+        var filters = [Self.filter("gaussianBlur", ["inputRadius": radius, "inputNormalizeEdges": true])]
         if grayscale { filters.append(Self.filter("colorSaturate", ["inputAmount": 0.0])) }
         CATransaction.begin()
         CATransaction.setDisableActions(true)

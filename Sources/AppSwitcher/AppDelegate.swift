@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let switcherBlurKey = "switcherBlurApps"
     private static let blurGrayscaleKey = "blurGrayscale"
     private let grayscaleItem = NSMenuItem(title: "Grayscale", action: #selector(toggleGrayscale), keyEquivalent: "")
+    private static let blurDesktopKey = "blurDesktop"
+    private let blurDesktopItem = NSMenuItem(title: "Blur Desktop", action: #selector(toggleBlurDesktop), keyEquivalent: "")
     private let switcherBlurItem = NSMenuItem(title: "Blur All Apps", action: #selector(toggleSwitcherBlur), keyEquivalent: "")
     private static let blurRadiusKey = "blurRadius"
     private let blur = BackgroundBlur()
@@ -68,7 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                   Self.switcherOthersScaleKey: 0.6, Self.dockPreviewWidthKey: 220.0,
                                                   Self.appsPerRowKey: 0.0, Self.eachWindowKey: true,
                                                   Self.blurRadiusKey: 20.0,
-                                                  Self.switcherBlurKey: true, Self.blurGrayscaleKey: false])
+                                                  Self.switcherBlurKey: true, Self.blurGrayscaleKey: false,
+                                                  Self.blurDesktopKey: false])
         controller.showsAppsWithoutWindows = UserDefaults.standard.bool(forKey: Self.showWindowlessKey)
         controller.showsPreviews = UserDefaults.standard.bool(forKey: Self.switcherPreviewsKey)
         controller.showsEachWindow = UserDefaults.standard.bool(forKey: Self.eachWindowKey)
@@ -77,6 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.blursApps = UserDefaults.standard.bool(forKey: Self.switcherBlurKey)
         blur.isGrayscale = UserDefaults.standard.bool(forKey: Self.blurGrayscaleKey)
         controller.blur.isGrayscale = blur.isGrayscale
+        blur.blursDesktop = UserDefaults.standard.bool(forKey: Self.blurDesktopKey)
+        controller.blur.blursDesktop = blur.blursDesktop
         if UserDefaults.standard.object(forKey: Self.blurSpacesKey) == nil {
             // Blur that was on everywhere is turned on for each existing desktop.
             let wasOn = UserDefaults.standard.bool(forKey: Self.legacyBlurKey)
@@ -130,6 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switcherBlurItem.target = self
         grayscaleItem.target = self
         grayscaleItem.indentationLevel = 1
+        blurDesktopItem.target = self
+        blurDesktopItem.indentationLevel = 1
         switcherBlurItem.indentationLevel = 1
         dockPreviewsItem.target = self
         screenRecordingItem.target = self
@@ -166,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(blurItem)
         menu.addItem(blurSliderItem())
         menu.addItem(grayscaleItem)
+        menu.addItem(blurDesktopItem)
         menu.addItem(.separator())
         menu.addItem(accessibilityItem)
         menu.addItem(screenRecordingItem)
@@ -214,6 +222,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         blur.radius = sender.doubleValue
         controller.blur.radius = sender.doubleValue
         UserDefaults.standard.set(sender.doubleValue, forKey: Self.blurRadiusKey)
+    }
+
+    @objc private func toggleBlurDesktop() {
+        blur.blursDesktop.toggle()
+        controller.blur.blursDesktop = blur.blursDesktop
+        UserDefaults.standard.set(blur.blursDesktop, forKey: Self.blurDesktopKey)
     }
 
     @objc private func toggleGrayscale() {
@@ -299,6 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         blurItem.state = WindowScanner.activeSpace().map(blur.enabledSpaces.contains) == true ? .on : .off
         switcherBlurItem.state = controller.blursApps ? .on : .off
         grayscaleItem.state = blur.isGrayscale ? .on : .off
+        blurDesktopItem.state = blur.blursDesktop ? .on : .off
         for item in choiceItems {
             guard let choice = item.representedObject as? SettingChoice else { continue }
             item.state = UserDefaults.standard.double(forKey: choice.key) == choice.value ? .on : .off
