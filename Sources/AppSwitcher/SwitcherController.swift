@@ -18,6 +18,10 @@ private enum KeyCode {
 final class SwitcherController {
     /// Quick ⌘⇥ taps switch without flashing the panel.
     private static let panelDelay: TimeInterval = 0.12
+    /// A ⌘ press shorter than this, with no other key, counts as a tap.
+    private static let commandTapMaxDuration: TimeInterval = 0.4
+    /// ⌘ pressed again within this time of a tap leaves ⌘⇥ to the built-in switcher until ⌘ is released.
+    private static let doubleTapInterval: TimeInterval = 0.35
 
     /// Also list apps without windows; switching to one opens a new window.
     var showsAppsWithoutWindows = false
@@ -35,6 +39,13 @@ final class SwitcherController {
     /// Last snapshot of each app's front window; covers apps whose windows cannot be captured now (minimized, hidden).
     private var snapshots: [pid_t: CGImage] = [:]
     private var session = 0
+    private var isCommandDown = false
+    private var commandDownAt = Date.distantPast
+    /// Whether a key other than ⌘ was pressed while ⌘ was down, so the press is not a tap.
+    private var keyPressedDuringCommand = false
+    private var lastCommandTapAt = Date.distantPast
+    /// Set for a ⌘ press that follows a ⌘ tap: everything passes through, so ⌘⇥ opens the built-in switcher.
+    private var passesThrough = false
 
     init(tracker: AppTracker) {
         self.tracker = tracker
@@ -47,6 +58,8 @@ final class SwitcherController {
 
     /// Returns true when the event is consumed.
     func keyDown(_ code: Int, flags: CGEventFlags, isRepeat: Bool) -> Bool {
+        keyPressedDuringCommand = true
+        if passesThrough { return false }
         let shift = flags.contains(.maskShift)
         if !isActive {
             guard code == KeyCode.tab, flags.contains(.maskCommand),
@@ -78,9 +91,28 @@ final class SwitcherController {
     }
 
     func flagsChanged(_ flags: CGEventFlags) {
+        trackCommandTaps(commandDown: flags.contains(.maskCommand))
         if isActive && !flags.contains(.maskCommand) {
             // As in the built-in switcher, holding ⌥ on release also restores a minimized window.
             commit(restoreMinimized: flags.contains(.maskAlternate))
+        }
+    }
+
+    /// ⌘ tapped, then pressed again within `doubleTapInterval`: that second press is left to the system.
+    private func trackCommandTaps(commandDown: Bool) {
+        guard commandDown != isCommandDown else { return }
+        isCommandDown = commandDown
+        let now = Date()
+        if commandDown {
+            passesThrough = !isActive && now.timeIntervalSince(lastCommandTapAt) <= Self.doubleTapInterval
+            if passesThrough { log.info("⌘ double-tapped: built-in switcher") }
+            commandDownAt = now
+            keyPressedDuringCommand = false
+        } else {
+            let isTap = !keyPressedDuringCommand && now.timeIntervalSince(commandDownAt) <= Self.commandTapMaxDuration
+            // The pass-through press itself does not start another double tap.
+            lastCommandTapAt = isTap && !passesThrough ? now : .distantPast
+            passesThrough = false
         }
     }
 

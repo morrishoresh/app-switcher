@@ -21,6 +21,7 @@ Same as the built-in switcher:
 - while ⌘ is held: `` ` `` or ← / →  to move, ↑ / ↓ to move between rows, Esc to cancel, Return to switch, Q to quit the selected app, H to hide it
 - switching to an app whose windows are all minimized restores all of them and brings them to the front; hold ⌥ when releasing ⌘ to do this for any app
 - hovering selects, clicking switches
+- tap ⌘, then press it again within 0.35 s and hold it: ⌘⇥ opens the built-in switcher for that press
 
 ## Apps without windows
 
