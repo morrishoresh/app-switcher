@@ -49,6 +49,30 @@ With Dock Previews (menu-bar menu, on by default) on, resting the pointer on a r
 
 Snapshots need Screen Recording access (System Settings › Privacy & Security › Screen Recording), asked for when previews are first turned on; without it, previews show the app icon in place of each snapshot. Minimized windows and windows of a hidden app show their last snapshot, or the app icon if none was taken yet.
 
+## Default settings
+
+All settings are in the menu-bar menu.
+
+| Setting | Default |
+|---|---|
+| **⌘⇥ Switcher** | On |
+| Show Each Window Separately | On |
+| Show Apps Without Windows | Off |
+| Blur All Apps | On |
+| Show Window Previews | Off |
+| Selected Preview Size | Medium (320 pt) |
+| Other Previews Size | 60% of Selected |
+| Apps per Row | As Many as Fit |
+| **Dock Previews** | On |
+| Preview Size | Medium (220 pt) |
+| **Blur Background Apps on This Desktop** | Off on every desktop |
+| Blur amount (slider) | 20 |
+| Grayscale | Off |
+| Blur Desktop | Off |
+| Launch at Login | Off |
+
+The blur amount, Grayscale, and Blur Desktop apply to both blurs.
+
 ## Limitations
 
 - Event taps get no keystrokes while a password field has secure input on, so ⌘⇥ opens the built-in switcher then.
