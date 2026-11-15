@@ -7,6 +7,8 @@ import ApplicationServices
 private func CGSMainConnectionID() -> Int32
 @_silgen_name("CGSCopyManagedDisplaySpaces")
 private func CGSCopyManagedDisplaySpaces(_ cid: Int32) -> CFArray?
+@_silgen_name("CGSGetActiveSpace")
+private func CGSGetActiveSpace(_ cid: Int32) -> Int
 @_silgen_name("CGSCopyWindowsWithOptionsAndTags")
 private func CGSCopyWindowsWithOptionsAndTags(
     _ cid: Int32, _ owner: Int32, _ spaces: CFArray, _ options: Int32,
@@ -87,6 +89,49 @@ enum WindowScanner {
             let minHeight = fullScreenIDs.contains(id) ? minFullScreenWindowHeight : minWindowSize
             return bounds.width >= minWindowSize && bounds.height >= minHeight
         }
+    }
+
+    /// Display identifier in the managed display spaces when all displays share their Spaces.
+    static let sharedSpacesDisplay = "Main"
+
+    /// The Space a display now shows.
+    struct DisplaySpace {
+        /// Display UUID, or `sharedSpacesDisplay`.
+        let display: String
+        /// Space UUID; empty for the first desktop.
+        let space: String
+        let isFullScreen: Bool
+    }
+
+    /// The Space each display now shows, and the windows on those that are full-screen Spaces.
+    static func currentSpaces() -> (spaces: [DisplaySpace], fullScreenWindows: Set<UInt32>) {
+        let cid = CGSMainConnectionID()
+        guard let displays = CGSCopyManagedDisplaySpaces(cid) as? [[String: Any]] else { return ([], []) }
+        var spaces: [DisplaySpace] = []
+        var fullScreenIDs: [Int] = []
+        for display in displays {
+            guard let current = display["Current Space"] as? [String: Any], let displayID = display["Display Identifier"] as? String
+            else { continue }
+            let isFullScreen = current["type"] as? Int == fullScreenSpaceType
+            spaces.append(DisplaySpace(display: displayID, space: current["uuid"] as? String ?? "", isFullScreen: isFullScreen))
+            if isFullScreen, let spaceID = current["ManagedSpaceID"] as? Int { fullScreenIDs.append(spaceID) }
+        }
+        return (spaces, fullScreenIDs.isEmpty ? [] : Set(windowIDs(cid, spaces: fullScreenIDs)))
+    }
+
+    /// UUID of the Space with the keyboard focus; empty for the first desktop.
+    static func activeSpace() -> String? {
+        let cid = CGSMainConnectionID()
+        let active = CGSGetActiveSpace(cid)
+        let displays = CGSCopyManagedDisplaySpaces(cid) as? [[String: Any]] ?? []
+        let space = displays.flatMap { $0["Spaces"] as? [[String: Any]] ?? [] }.first { $0["ManagedSpaceID"] as? Int == active }
+        return space.map { $0["uuid"] as? String ?? "" }
+    }
+
+    /// UUIDs of all desktops and full-screen Spaces.
+    static func allSpaces() -> [String] {
+        let displays = CGSCopyManagedDisplaySpaces(CGSMainConnectionID()) as? [[String: Any]] ?? []
+        return displays.flatMap { $0["Spaces"] as? [[String: Any]] ?? [] }.map { $0["uuid"] as? String ?? "" }
     }
 
     private static func windowIDs(_ cid: Int32, spaces: [Int]) -> [UInt32] {

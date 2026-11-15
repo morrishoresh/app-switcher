@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import ServiceManagement
 import os
 
@@ -34,6 +35,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let switcherOthersScaleKey = "switcherOthersScale"
     private static let dockPreviewWidthKey = "dockPreviewWidth"
     private static let appsPerRowKey = "switcherAppsPerRow"
+    /// Before blur was per desktop: on or off everywhere.
+    private static let legacyBlurKey = "blurBackground"
+    /// UUIDs of the desktops with Blur Background Apps on.
+    private static let blurSpacesKey = "blurSpaces"
+    private static let switcherBlurKey = "switcherBlurApps"
+    private static let blurGrayscaleKey = "blurGrayscale"
+    private let grayscaleItem = NSMenuItem(title: "Grayscale", action: #selector(toggleGrayscale), keyEquivalent: "")
+    private let switcherBlurItem = NSMenuItem(title: "Blur All Apps", action: #selector(toggleSwitcherBlur), keyEquivalent: "")
+    private static let blurRadiusKey = "blurRadius"
+    private let blur = BackgroundBlur()
+    private let blurItem = NSMenuItem(title: "Blur Background Apps on This Desktop", action: #selector(toggleBlur), keyEquivalent: "b")
+    /// ⌘B anywhere turns the blur on and off.
+    private var blurHotKey: HotKey?
+    /// While the menu is open, its own key equivalent handles ⌘B.
+    private var isMenuOpen = false
     /// Width to height of preview snapshots.
     private static let previewAspect = 0.625
     private var choiceItems: [NSMenuItem] = []
@@ -50,10 +66,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.register(defaults: [Self.enabledKey: true, Self.showWindowlessKey: false, Self.dockPreviewsKey: true,
                                                   Self.switcherPreviewsKey: false, Self.switcherPreviewWidthKey: 320.0,
                                                   Self.switcherOthersScaleKey: 0.6, Self.dockPreviewWidthKey: 220.0,
-                                                  Self.appsPerRowKey: 0.0, Self.eachWindowKey: true])
+                                                  Self.appsPerRowKey: 0.0, Self.eachWindowKey: true,
+                                                  Self.blurRadiusKey: 20.0,
+                                                  Self.switcherBlurKey: true, Self.blurGrayscaleKey: false])
         controller.showsAppsWithoutWindows = UserDefaults.standard.bool(forKey: Self.showWindowlessKey)
         controller.showsPreviews = UserDefaults.standard.bool(forKey: Self.switcherPreviewsKey)
         controller.showsEachWindow = UserDefaults.standard.bool(forKey: Self.eachWindowKey)
+        blur.radius = UserDefaults.standard.double(forKey: Self.blurRadiusKey)
+        controller.blur.radius = blur.radius
+        controller.blursApps = UserDefaults.standard.bool(forKey: Self.switcherBlurKey)
+        blur.isGrayscale = UserDefaults.standard.bool(forKey: Self.blurGrayscaleKey)
+        controller.blur.isGrayscale = blur.isGrayscale
+        if UserDefaults.standard.object(forKey: Self.blurSpacesKey) == nil {
+            // Blur that was on everywhere is turned on for each existing desktop.
+            let wasOn = UserDefaults.standard.bool(forKey: Self.legacyBlurKey)
+            UserDefaults.standard.set(wasOn ? WindowScanner.allSpaces() : [], forKey: Self.blurSpacesKey)
+            UserDefaults.standard.removeObject(forKey: Self.legacyBlurKey)
+        }
+        blur.enabledSpaces = Set(UserDefaults.standard.stringArray(forKey: Self.blurSpacesKey) ?? [])
+        blurHotKey = HotKey(keyCode: kVK_ANSI_B, modifiers: cmdKey) { [weak self] in
+            guard let self, !self.isMenuOpen else { return }
+            self.toggleBlur()
+        }
         dockPreview.isEnabled = UserDefaults.standard.bool(forKey: Self.dockPreviewsKey)
         if dockPreview.isEnabled || controller.showsPreviews { requestScreenRecording() }
         eventTap.isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
@@ -92,6 +126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switcherPreviewsItem.target = self
         eachWindowItem.target = self
         eachWindowItem.indentationLevel = 1
+        blurItem.target = self
+        switcherBlurItem.target = self
+        grayscaleItem.target = self
+        grayscaleItem.indentationLevel = 1
+        switcherBlurItem.indentationLevel = 1
         dockPreviewsItem.target = self
         screenRecordingItem.target = self
         // Each feature is turned on and off on its own, with its settings indented below it.
@@ -102,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(statusLine)
         menu.addItem(eachWindowItem)
         menu.addItem(showWindowlessItem)
+        menu.addItem(switcherBlurItem)
         menu.addItem(switcherPreviewsItem)
         menu.addItem(settingMenu("Selected Preview Size", key: Self.switcherPreviewWidthKey,
                                  options: [("Small", 240), ("Medium", 320), ("Large", 400), ("Extra Large", 480)]) {
@@ -122,6 +162,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                  options: [("Small", 160), ("Medium", 220), ("Large", 300), ("Extra Large", 380)]) {
             DockPreviewPanel.thumbnailSize = CGSize(width: $0, height: ($0 * Self.previewAspect).rounded())
         })
+        menu.addItem(.separator())
+        menu.addItem(blurItem)
+        menu.addItem(blurSliderItem())
+        menu.addItem(grayscaleItem)
         menu.addItem(.separator())
         menu.addItem(accessibilityItem)
         menu.addItem(screenRecordingItem)
@@ -148,6 +192,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.submenu = submenu
         apply(UserDefaults.standard.double(forKey: key))
         return item
+    }
+
+    /// Slider for the blur amount, indented under Blur Background Apps; also sets the ⌘⇥ blur. Changes apply while dragging.
+    private func blurSliderItem() -> NSMenuItem {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 26))
+        let slider = NSSlider(value: blur.radius, minValue: BackgroundBlur.radiusRange.lowerBound,
+                              maxValue: BackgroundBlur.radiusRange.upperBound, target: self, action: #selector(blurRadiusChanged(_:)))
+        slider.isContinuous = true
+        slider.controlSize = .small
+        slider.frame = NSRect(x: 36, y: 3, width: view.frame.width - 36 - 16, height: 20)
+        slider.autoresizingMask = [.width]
+        view.autoresizingMask = [.width]
+        view.addSubview(slider)
+        let item = NSMenuItem()
+        item.view = view
+        return item
+    }
+
+    @objc private func blurRadiusChanged(_ sender: NSSlider) {
+        blur.radius = sender.doubleValue
+        controller.blur.radius = sender.doubleValue
+        UserDefaults.standard.set(sender.doubleValue, forKey: Self.blurRadiusKey)
+    }
+
+    @objc private func toggleGrayscale() {
+        blur.isGrayscale.toggle()
+        controller.blur.isGrayscale = blur.isGrayscale
+        UserDefaults.standard.set(blur.isGrayscale, forKey: Self.blurGrayscaleKey)
+    }
+
+    @objc private func toggleSwitcherBlur() {
+        controller.blursApps.toggle()
+        UserDefaults.standard.set(controller.blursApps, forKey: Self.switcherBlurKey)
+    }
+
+    /// Turns Blur Background Apps on or off for the current desktop.
+    @objc private func toggleBlur() {
+        guard let space = WindowScanner.activeSpace() else { return }
+        if blur.enabledSpaces.contains(space) { blur.enabledSpaces.remove(space) } else { blur.enabledSpaces.insert(space) }
+        // Desktops that no longer exist are dropped.
+        let existing = Set(WindowScanner.allSpaces())
+        UserDefaults.standard.set(blur.enabledSpaces.filter(existing.contains).sorted(), forKey: Self.blurSpacesKey)
     }
 
     @objc private func chooseSetting(_ sender: NSMenuItem) {
@@ -203,10 +289,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 
+    func menuWillOpen(_ menu: NSMenu) { isMenuOpen = true }
+    func menuDidClose(_ menu: NSMenu) { isMenuOpen = false }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         showWindowlessItem.state = controller.showsAppsWithoutWindows ? .on : .off
         switcherPreviewsItem.state = controller.showsPreviews ? .on : .off
         eachWindowItem.state = controller.showsEachWindow ? .on : .off
+        blurItem.state = WindowScanner.activeSpace().map(blur.enabledSpaces.contains) == true ? .on : .off
+        switcherBlurItem.state = controller.blursApps ? .on : .off
+        grayscaleItem.state = blur.isGrayscale ? .on : .off
         for item in choiceItems {
             guard let choice = item.representedObject as? SettingChoice else { continue }
             item.state = UserDefaults.standard.double(forKey: choice.key) == choice.value ? .on : .off

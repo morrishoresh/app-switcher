@@ -37,6 +37,12 @@ With Show Window Previews (menu-bar menu, under ⌘⇥ Switcher) on, each app is
 
 Icons are the size of the built-in switcher's icons (128 pt), and previews of apps that are not selected are never shorter than that; apps wrap onto more rows instead, and also past the number set in Apps per Row (same menu).
 
+## Background blur
+
+With Blur All Apps (menu-bar menu, under ⌘⇥ Switcher, on by default) on, the windows of all apps behind the switcher are blurred while it is open.
+
+With Blur Background Apps on This Desktop (menu-bar menu) on, the windows of every app except the frontmost one are blurred; the frontmost app's windows that are in front of all others stay sharp. The slider below it sets the amount of blur, and Grayscale (below the slider) also removes the color of the blurred windows, for both. It is turned on and off for each desktop (Space) separately; ⌘B, in any app, turns it on and off for the current desktop; apps no longer get ⌘B (Bold, Show Bookmarks). Full-screen windows are not blurred. Neither blur covers the desktop, the menu bar or the Dock.
+
 ## Dock previews
 
 With Dock Previews (menu-bar menu, on by default) on, resting the pointer on a running app's Dock icon shows its windows next to the icon: a snapshot of each, its title, and the tabs of windows that have a tab bar (Finder, Terminal, Safari, Firefox, and other apps with standard tabs). Clicking a window brings it to the front, switching Space if needed; clicking a tab selects it first. The close button (the system's red window button) that appears on the window or tab under the pointer closes that window or tab. Resting the pointer on a tab title selects that tab in the app and shows its snapshot, since apps draw only the selected tab; when the preview closes without a click, each window goes back to the tab it had. Minimized windows are listed after the others and are restored when clicked. Preview Size (under Dock Previews) sets the snapshot size.

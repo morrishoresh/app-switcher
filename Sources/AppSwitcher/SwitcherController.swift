@@ -29,6 +29,10 @@ final class SwitcherController {
     var showsPreviews = false
     /// List an app's windows one by one instead of the app once.
     var showsEachWindow = true
+    /// Blur all apps behind the panel while it is open.
+    var blursApps = true
+    /// Blurs everything behind the panel; its radius is set from the menu-bar menu.
+    let blur = ScreenBlur()
 
     private let tracker: AppTracker
     private let panel = SwitcherPanel()
@@ -171,6 +175,7 @@ final class SwitcherController {
     }
 
     private func showPanel() {
+        if blursApps, !panel.isVisible { blur.show(below: panel.level) }
         panel.show(entries: entries, selected: selected, snapshots: showsPreviews ? snapshots : nil)
     }
 
@@ -207,6 +212,7 @@ final class SwitcherController {
         pendingShow?.cancel()
         pendingShow = nil
         panel.orderOut(nil)
+        blur.hide()
         entries = []
     }
 
