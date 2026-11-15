@@ -10,6 +10,10 @@ final class DockPreviewController {
     /// Margin around the icon that still counts as on it, for the pointer resting on its edge.
     private static let iconSlack: CGFloat = 6
     private static let thumbnailCacheLimit = 200
+    /// Pointer rest on a tab title before that tab is selected, so passing over titles selects nothing.
+    private static let tabHoverDelay: TimeInterval = 0.15
+    /// Time for the app to draw a newly selected tab before it is captured.
+    private static let tabDrawDelay: TimeInterval = 0.3
 
     var isEnabled = false {
         didSet {
@@ -33,11 +37,19 @@ final class DockPreviewController {
     private var generation = 0
     /// Last snapshot of each window; covers windows that cannot be captured now (minimized, other Space).
     private var thumbnails: [CGWindowID: CGImage] = [:]
+    /// Last snapshot of each tab, taken while it was selected.
+    private var tabSnapshots: [AXUIElement: CGImage] = [:]
+    /// Tab selected in each window before hovering selected another; restored when the preview closes without a click.
+    private var originalTabs: [CGWindowID: AXUIElement] = [:]
+    /// Tab currently selected by hovering, per window.
+    private var hoverSelectedTabs: [CGWindowID: AXUIElement] = [:]
+    private var pendingTabSelect: DispatchWorkItem?
 
     init() {
         dock.onChange = { [weak self] in self?.hoverChanged($0) }
         panel.onWindowClick = { [weak self] in self?.focus(window: $0, tab: nil) }
         panel.onTabClick = { [weak self] in self?.focus(window: $0, tab: $1) }
+        panel.onTabHover = { [weak self] in self?.tabHovered(window: $0, tab: $1) }
     }
 
     /// Call once Accessibility access is granted; observing the Dock needs it.
@@ -81,6 +93,9 @@ final class DockPreviewController {
 
     /// Lists the windows off the main thread (Accessibility calls can block), then shows the panel and fills in snapshots.
     private func load(_ item: DockItem) {
+        // Moving to another app's icon closes the previous app's preview.
+        pendingTabSelect?.cancel()
+        restoreTabs()
         generation += 1
         let current = generation
         let app = item.app
@@ -107,8 +122,58 @@ final class DockPreviewController {
             guard let self, !images.isEmpty else { return }
             if self.thumbnails.count + images.count > Self.thumbnailCacheLimit { self.thumbnails.removeAll() }
             self.thumbnails.merge(images) { _, new in new }
+            if self.tabSnapshots.count + images.count > Self.thumbnailCacheLimit { self.tabSnapshots.removeAll() }
+            for window in windows {
+                if let image = images[window.id], let tab = window.tabs.first(where: \.isSelected) {
+                    self.tabSnapshots[tab.element] = image
+                }
+            }
             if current == self.generation, self.panel.isVisible { self.panel.setThumbnails(images) }
         }
+    }
+
+    /// Background tabs are not drawn, so a tab's content can only be captured once it is selected. Resting on a tab
+    /// title selects that tab in the app and captures the window; until then the tab's last snapshot, if any, shows.
+    private func tabHovered(window index: Int, tab tabIndex: Int) {
+        pendingTabSelect?.cancel()
+        guard let shown, shown.windows.indices.contains(index) else { return }
+        let window = shown.windows[index]
+        guard window.isOnSpace, window.tabs.indices.contains(tabIndex) else { return }
+        let tab = window.tabs[tabIndex]
+        if let cached = tabSnapshots[tab.element] { panel.setThumbnails([window.id: cached]) }
+        let select = DispatchWorkItem { [weak self] in self?.selectTab(tab, in: window) }
+        pendingTabSelect = select
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.tabHoverDelay, execute: select)
+    }
+
+    private func selectTab(_ tab: TabInfo, in window: WindowInfo) {
+        let selected = hoverSelectedTabs[window.id] ?? window.tabs.first(where: \.isSelected)?.element
+        if selected != tab.element {
+            if originalTabs[window.id] == nil, let selected { originalTabs[window.id] = selected }
+            AXUIElementPerformAction(tab.element, kAXPressAction as CFString)
+            hoverSelectedTabs[window.id] = tab.element
+        }
+        let current = generation
+        let scale = panel.screen?.backingScaleFactor ?? 2
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.tabDrawDelay) { [weak self] in
+            guard let self, current == self.generation else { return }
+            Task { @MainActor [weak self] in
+                let images = await Thumbnailer.capture(ids: [window.id], maxSize: DockPreviewPanel.thumbnailSize, scale: scale)
+                guard let self, let image = images[window.id] else { return }
+                self.tabSnapshots[tab.element] = image
+                let showing = self.hoverSelectedTabs[window.id] ?? window.tabs.first(where: \.isSelected)?.element
+                if current == self.generation, showing == tab.element { self.panel.setThumbnails([window.id: image]) }
+            }
+        }
+    }
+
+    /// Puts back the tabs that hovering selected, except in `kept`, the window just clicked.
+    private func restoreTabs(except kept: CGWindowID? = nil) {
+        for (id, original) in originalTabs where id != kept && hoverSelectedTabs[id] != original {
+            AXUIElementPerformAction(original, kAXPressAction as CFString)
+        }
+        originalTabs = [:]
+        hoverSelectedTabs = [:]
     }
 
     /// The Dock does not always report the pointer leaving an icon, for one when it hides itself. So while the panel is
@@ -140,10 +205,13 @@ final class DockPreviewController {
         }
     }
 
-    private func hide() {
+    private func hide(keepingTabsOf kept: CGWindowID? = nil) {
         generation += 1
         pendingShow?.cancel()
         pendingShow = nil
+        pendingTabSelect?.cancel()
+        pendingTabSelect = nil
+        restoreTabs(except: kept)
         pointerTimer?.invalidate()
         pointerTimer = nil
         shown = nil
@@ -159,7 +227,7 @@ final class DockPreviewController {
     private func focus(window index: Int, tab: Int?) {
         guard let shown, shown.windows.indices.contains(index) else { return }
         let window = shown.windows[index]
-        hide()
+        hide(keepingTabsOf: window.id)
         suppressedPid = hovered?.app.processIdentifier
         AppWindows.focus(window, of: shown.app, tab: tab.flatMap { window.tabs.indices.contains($0) ? window.tabs[$0] : nil })
     }

@@ -4,8 +4,10 @@ import AppKit
 final class DockPreviewPanel: NSPanel {
     var onWindowClick: ((Int) -> Void)?
     var onTabClick: ((_ window: Int, _ tab: Int) -> Void)?
+    var onTabHover: ((_ window: Int, _ tab: Int) -> Void)?
 
-    static let thumbnailSize = CGSize(width: 220, height: 138)
+    /// Set from the menu-bar menu.
+    static var thumbnailSize = CGSize(width: 220, height: 138)
     private static let margin: CGFloat = 10
     private static let spacing: CGFloat = 8
     private static let headerHeight: CGFloat = 22
@@ -71,6 +73,7 @@ final class DockPreviewPanel: NSPanel {
                                 fallbackTitle: appName, icon: app.icon)
             card.onClick = { [weak self] in self?.onWindowClick?(index) }
             card.onTabClick = { [weak self] in self?.onTabClick?(index, $0) }
+            card.onTabHover = { [weak self] in self?.onTabHover?(index, $0) }
             background.addSubview(card)
             return card
         }
@@ -143,7 +146,12 @@ private class HoverView: NSView {
         return hit is HoverView ? hit : self
     }
 
-    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    var onEnter: (() -> Void)?
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        onEnter?()
+    }
     override func mouseExited(with event: NSEvent) { isHovered = false }
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -151,6 +159,7 @@ private class HoverView: NSView {
 
 private final class CardView: HoverView {
     var onTabClick: ((Int) -> Void)?
+    var onTabHover: ((Int) -> Void)?
 
     private static let padding: CGFloat = 6
     private static let titleHeight: CGFloat = 18
@@ -209,6 +218,7 @@ private final class CardView: HoverView {
             let row = TabRowView(frame: NSRect(x: p, y: rowTop - Self.tabHeight, width: thumbnail.width, height: Self.tabHeight),
                                  title: tab.title, isSelected: tab.isSelected)
             row.onClick = { [weak self] in self?.onTabClick?(index) }
+            row.onEnter = { [weak self] in self?.onTabHover?(index) }
             addSubview(row)
             rowTop -= Self.tabHeight
         }

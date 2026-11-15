@@ -17,6 +17,10 @@ enum WindowScanner {
     /// Smaller layer-0 windows are helper surfaces (drag images, tooltips), not user windows.
     private static let minWindowSize: CGFloat = 50
     private static let axTimeout: Float = 0.15
+    /// In full screen, the toolbar is a separate window across the top, about 50 pt tall; full-screen windows are taller.
+    private static let minFullScreenWindowHeight: CGFloat = 100
+    /// `type` of a full-screen Space in the managed display spaces.
+    private static let fullScreenSpaceType = 4
 
     /// Of the given pids, those that own at least one window: placed on any Space, minimized, or belonging to a hidden app.
     static func pidsWithWindows(among pids: [pid_t]) -> Set<pid_t> {
@@ -33,6 +37,17 @@ enum WindowScanner {
             found.insert(pid)
         }
         return found
+    }
+
+    /// Each app's frontmost window placed on any Space.
+    static func frontWindows() -> [pid_t: CGWindowID] {
+        var front: [pid_t: CGWindowID] = [:]
+        for window in windowsInSpaces() {
+            guard let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+                  let id = window[kCGWindowNumber as String] as? CGWindowID, front[pid] == nil else { continue }
+            front[pid] = id
+        }
+        return front
     }
 
     /// Whether the app has a window placed on any Space, i.e. one that is not minimized or hidden.
@@ -56,15 +71,11 @@ enum WindowScanner {
     static func windowsInSpaces() -> [[String: Any]] {
         let cid = CGSMainConnectionID()
         guard let displays = CGSCopyManagedDisplaySpaces(cid) as? [[String: Any]] else { return [] }
-        let spaceIDs = displays.flatMap { display in
-            (display["Spaces"] as? [[String: Any]] ?? []).compactMap { $0["ManagedSpaceID"] as? Int }
-        }
-        var setTags: Int64 = 0
-        var clearTags: Int64 = 0
-        // Option 0x2 lists windows placed on the Spaces; 0x7 would add minimized and ordered-out windows.
-        guard let ids = CGSCopyWindowsWithOptionsAndTags(cid, 0, spaceIDs as CFArray, 0x2, &setTags, &clearTags) as? [UInt32]
-        else { return [] }
-        let idSet = Set(ids)
+        let spaces = displays.flatMap { $0["Spaces"] as? [[String: Any]] ?? [] }
+        let spaceIDs = spaces.compactMap { $0["ManagedSpaceID"] as? Int }
+        let fullScreenSpaceIDs = spaces.filter { $0["type"] as? Int == fullScreenSpaceType }.compactMap { $0["ManagedSpaceID"] as? Int }
+        let idSet = Set(windowIDs(cid, spaces: spaceIDs))
+        let fullScreenIDs = fullScreenSpaceIDs.isEmpty ? [] : Set(windowIDs(cid, spaces: fullScreenSpaceIDs))
         let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         return windows.filter { window in
             guard let id = window[kCGWindowNumber as String] as? UInt32, idSet.contains(id),
@@ -73,8 +84,16 @@ enum WindowScanner {
                   let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: boundsDict)
             else { return false }
-            return bounds.width >= minWindowSize && bounds.height >= minWindowSize
+            let minHeight = fullScreenIDs.contains(id) ? minFullScreenWindowHeight : minWindowSize
+            return bounds.width >= minWindowSize && bounds.height >= minHeight
         }
+    }
+
+    private static func windowIDs(_ cid: Int32, spaces: [Int]) -> [UInt32] {
+        var setTags: Int64 = 0
+        var clearTags: Int64 = 0
+        // Option 0x2 lists windows placed on the Spaces; 0x7 would add minimized and ordered-out windows.
+        return CGSCopyWindowsWithOptionsAndTags(cid, 0, spaces as CFArray, 0x2, &setTags, &clearTags) as? [UInt32] ?? []
     }
 
     private static func hasAccessibilityWindow(_ pid: pid_t) -> Bool {
