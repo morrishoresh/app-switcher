@@ -49,6 +49,11 @@ enum WindowScanner {
     }
 
     private static func pidsWithWindowsInSpaces() -> Set<pid_t> {
+        Set(windowsInSpaces().compactMap { $0[kCGWindowOwnerPID as String] as? pid_t })
+    }
+
+    /// Window-list entries of user windows placed on any Space, front to back.
+    static func windowsInSpaces() -> [[String: Any]] {
         let cid = CGSMainConnectionID()
         guard let displays = CGSCopyManagedDisplaySpaces(cid) as? [[String: Any]] else { return [] }
         let spaceIDs = displays.flatMap { display in
@@ -61,19 +66,15 @@ enum WindowScanner {
         else { return [] }
         let idSet = Set(ids)
         let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        var pids = Set<pid_t>()
-        for window in windows {
+        return windows.filter { window in
             guard let id = window[kCGWindowNumber as String] as? UInt32, idSet.contains(id),
                   (window[kCGWindowLayer as String] as? Int) == 0,
                   (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
                   let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
-                  let bounds = CGRect(dictionaryRepresentation: boundsDict),
-                  bounds.width >= minWindowSize, bounds.height >= minWindowSize,
-                  let pid = window[kCGWindowOwnerPID as String] as? pid_t
-            else { continue }
-            pids.insert(pid)
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict)
+            else { return false }
+            return bounds.width >= minWindowSize && bounds.height >= minWindowSize
         }
-        return pids
     }
 
     private static func hasAccessibilityWindow(_ pid: pid_t) -> Bool {
@@ -87,7 +88,7 @@ enum WindowScanner {
         }
     }
 
-    private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
         var value: CFTypeRef?
         return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
     }
