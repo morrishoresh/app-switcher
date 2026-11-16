@@ -48,26 +48,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let blurRadiusKey = "blurRadius"
     private let blur = BackgroundBlur()
     private let blurItem = NSMenuItem(title: "Blur Background Apps on This Desktop", action: #selector(toggleBlur), keyEquivalent: "")
-    /// ⌘ tapped, then held again with B pressed (⌘⌘B), anywhere, turns the blur on and off; +/- pressed while B is
-    /// held change the blur amount instead.
+    /// ⌘ tapped, then held again: B (⌘⌘B), anywhere, turns the blur on and off; + and - (⌘⌘+, ⌘⌘-) change the blur
+    /// amount.
     private let commandDoubleTap = CommandDoubleTap()
-    /// ⌘B, registered only while ⌘ is held after a ⌘ tap, so apps keep a single ⌘B.
-    private var blurHotKey: HotKey?
-    /// ⌘ plus the main keyboard's and the keypad's + and - keys, registered only while ⌘⌘B is held so apps keep them
-    /// otherwise.
-    private var blurAmountHotKeys: [HotKey] = []
-    /// +/- was pressed during the current ⌘⌘B press, so releasing B does not turn the blur on or off.
-    private var didChangeBlurAmount = false
+    /// ⌘B, and ⌘ plus the main keyboard's and the keypad's + and - keys, registered only while ⌘ is held after a ⌘
+    /// tap, so apps keep them otherwise.
+    private var blurHotKeys: [HotKey] = []
     private static let blurAmountStep = 4.0
-    /// The last + or - press while ⌘⌘B is held: whether it was +, and when. The same key pressed again within
+    /// The last ⌘⌘+ or ⌘⌘- press: whether it was +, and when. The same key pressed again within
     /// `blurDoublePressInterval` sets the blur amount to its maximum or minimum.
     private var lastBlurAmountPress: (isIncrease: Bool, at: Date)?
-    /// Ends the ⌘⌘B press if its release is missed, such as when ⌘ goes up before B.
-    private var blurKeyTimer: Timer?
     /// Time between two presses of + or - that sets the blur amount to its maximum or minimum.
     private static let blurDoublePressInterval: TimeInterval = 0.3
     private var blurSlider: NSSlider?
-    /// ⌘⌘B is ignored while the menu is open.
+    /// ⌘⌘B, ⌘⌘+ and ⌘⌘- are ignored while the menu is open.
     private var isMenuOpen = false
     /// Width to height of preview snapshots.
     private static let previewAspect = 0.625
@@ -106,15 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             UserDefaults.standard.removeObject(forKey: Self.legacyBlurKey)
         }
         blur.enabledSpaces = Set(UserDefaults.standard.stringArray(forKey: Self.blurSpacesKey) ?? [])
-        commandDoubleTap.onHoldStart = { [weak self] in
-            self?.blurHotKey = HotKey(keyCode: kVK_ANSI_B, modifiers: cmdKey, onRelease: { [weak self] in
-                self?.blurKeyReleased()
-            }) { [weak self] in
-                guard let self, !self.isMenuOpen else { return }
-                self.blurKeyPressed()
-            }
-        }
-        commandDoubleTap.onHoldEnd = { [weak self] in self?.blurHotKey = nil }
+        commandDoubleTap.onHoldStart = { [weak self] in self?.registerBlurHotKeys() }
+        commandDoubleTap.onHoldEnd = { [weak self] in self?.blurHotKeys = [] }
         dockPreview.isEnabled = UserDefaults.standard.bool(forKey: Self.dockPreviewsKey)
         if dockPreview.isEnabled || controller.showsPreviews { requestScreenRecording() }
         eventTap.isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
@@ -257,35 +244,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.set(radius, forKey: Self.blurRadiusKey)
     }
 
-    private func blurKeyPressed() {
-        // B repeats while held.
-        guard blurAmountHotKeys.isEmpty else { return }
-        didChangeBlurAmount = false
+    private func registerBlurHotKeys() {
+        let toggle = HotKey(keyCode: kVK_ANSI_B, modifiers: cmdKey) { [weak self] in
+            guard let self, !self.isMenuOpen else { return }
+            self.toggleBlur()
+        }
         let keys = [(kVK_ANSI_Equal, 1.0), (kVK_ANSI_KeypadPlus, 1.0), (kVK_ANSI_Minus, -1.0), (kVK_ANSI_KeypadMinus, -1.0)]
         // + on the main keyboard is typed with or without ⇧.
-        blurAmountHotKeys = keys.flatMap { code, sign in
+        let amount = keys.flatMap { code, sign in
             [cmdKey, cmdKey | shiftKey].map { modifiers in
-                HotKey(keyCode: code, modifiers: modifiers) { [weak self] in self?.changeBlurAmount(by: sign * Self.blurAmountStep) }
+                HotKey(keyCode: code, modifiers: modifiers) { [weak self] in
+                    guard let self, !self.isMenuOpen else { return }
+                    self.changeBlurAmount(by: sign * Self.blurAmountStep)
+                }
             }
         }
-        blurKeyTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            if !Self.isBlurKeyDown { self?.blurKeyReleased() }
-        }
+        blurHotKeys = [toggle] + amount
     }
-
-    private func blurKeyReleased() {
-        guard !blurAmountHotKeys.isEmpty else { return }
-        blurAmountHotKeys = []
-        blurKeyTimer?.invalidate()
-        blurKeyTimer = nil
-        if !didChangeBlurAmount { toggleBlur() }
-    }
-
-    private static var isBlurKeyDown: Bool { CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_ANSI_B)) }
 
     /// Also turns the blur on for the current desktop, so the change is visible.
     private func changeBlurAmount(by delta: Double) {
-        didChangeBlurAmount = true
         let range = BackgroundBlur.radiusRange
         let isIncrease = delta > 0
         let now = Date()
