@@ -1,8 +1,8 @@
 import AppKit
 
 /// Blurs the windows of all apps but the frontmost one, on the desktops it is turned on for: a click-through window per
-/// screen, ordered right below the frontmost app's windows that are in front of all other windows, that blurs only
-/// where the windows behind are.
+/// screen and desktop, ordered right below the frontmost app's windows that are in front of all other windows, that
+/// blurs only where the windows behind are.
 final class BackgroundBlur {
     static let radiusRange: ClosedRange<Double> = 2...60
     /// Window order and frames change without notice (new windows, a window of the front app brought forward); checked
@@ -29,24 +29,34 @@ final class BackgroundBlur {
         didSet { update() }
     }
 
-    private var windows: [NSWindow] = []
-    /// UUID of the display each of `windows` covers.
-    private var displays: [String?] = []
+    /// A screen on a desktop.
+    private struct Place: Hashable {
+        let display: String
+        let space: String
+    }
+
+    /// A window joining all Spaces was found tied to one desktop anyway, and macOS kept taking it back there when it was
+    /// moved. So each desktop gets its own windows, which stay on the desktop they were first shown on.
+    private var windows: [Place: NSWindow] = [:]
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
     private let ownPID = ProcessInfo.processInfo.processIdentifier
 
     private func start() {
-        makeWindows()
         let workspace = NSWorkspace.shared.notificationCenter
         observers = [
             workspace.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
-            workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
+            workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.removeWindowsOfRemovedSpaces()
+                self?.update()
+            },
             NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.makeWindows()
+                self?.removeAllWindows()
+                self?.update()
             },
         ]
         timer = Timer.scheduledTimer(withTimeInterval: Self.checkInterval, repeats: true) { [weak self] _ in self?.update() }
+        update()
     }
 
     private func stop() {
@@ -54,36 +64,54 @@ final class BackgroundBlur {
         timer = nil
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0); NotificationCenter.default.removeObserver($0) }
         observers = []
-        windows.forEach { $0.orderOut(nil) }
-        windows = []
+        removeAllWindows()
     }
 
-    private func makeWindows() {
-        windows.forEach { $0.orderOut(nil) }
-        let screens = NSScreen.screens
-        windows = screens.map { BlurWindow.make(for: $0, onFullScreenSpaces: false) }
-        displays = screens.map(\.displayUUID)
-        applyEffect()
-        update()
+    private func removeAllWindows() {
+        windows.values.forEach { $0.orderOut(nil) }
+        windows = [:]
+    }
+
+    /// A removed desktop's windows move to another desktop, where they would blur on top of that desktop's own.
+    private func removeWindowsOfRemovedSpaces() {
+        let spaces = Set(WindowScanner.allSpaces())
+        for (place, window) in windows where !spaces.contains(place.space) {
+            window.orderOut(nil)
+            windows[place] = nil
+        }
     }
 
     private func applyEffect() {
-        windows.forEach { BlurWindow.setEffect(of: $0, radius: radius, grayscale: isGrayscale) }
+        windows.values.forEach { BlurWindow.setEffect(of: $0, radius: radius, grayscale: isGrayscale) }
     }
 
-    /// Orders the blur windows right below the frontmost app's front windows and limits the blur to the windows behind
-    /// them, or hides the blur windows if the app has no window on screen.
+    /// The blur window for `screen` on `space`, made when first needed. One that is on another desktop than the current
+    /// one (made during a Space switch) is replaced.
+    private func window(for screen: NSScreen, at place: Place) -> NSWindow {
+        if let window = windows[place], !window.isVisible || window.isOnActiveSpace { return window }
+        windows[place]?.orderOut(nil)
+        let window = BlurWindow.make(for: screen, onAllSpaces: false)
+        BlurWindow.setEffect(of: window, radius: radius, grayscale: isGrayscale)
+        windows[place] = window
+        return window
+    }
+
+    /// Orders the current desktop's blur windows right below the frontmost app's front windows and limits the blur to
+    /// the windows behind them, or hides the blur windows if the app has no window on screen.
     private func update() {
         guard timer != nil, let front = NSWorkspace.shared.frontmostApplication?.processIdentifier, front != ownPID else { return }
         // On a full-screen Space the blur window is shown over the full-screen window whatever its order, so screens
         // showing one get no blur; nothing behind a full-screen window is visible anyway.
         let current = WindowScanner.currentSpaces()
         var shown: [NSWindow] = []
-        for (window, display) in zip(windows, displays) {
-            let space = current.spaces.first { $0.display == display || $0.display == WindowScanner.sharedSpacesDisplay }
-            if let space, !space.isFullScreen, enabledSpaces.contains(space.space) {
-                shown.append(window)
-            } else if window.isVisible {
+        for screen in NSScreen.screens {
+            guard let display = screen.displayUUID,
+                  let space = current.spaces.first(where: { $0.display == display || $0.display == WindowScanner.sharedSpacesDisplay })
+            else { continue }
+            let place = Place(display: display, space: space.space)
+            if !space.isFullScreen, enabledSpaces.contains(space.space) {
+                shown.append(window(for: screen, at: place))
+            } else if let window = windows[place], window.isVisible {
                 window.orderOut(nil)
             }
         }
@@ -132,7 +160,7 @@ final class ScreenBlur {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let frames = BlurWindow.appWindowFrames(list)
         windows = NSScreen.screens.map { screen in
-            let window = BlurWindow.make(for: screen, onFullScreenSpaces: true)
+            let window = BlurWindow.make(for: screen, onAllSpaces: true)
             window.level = NSWindow.Level(level.rawValue - 1)
             BlurWindow.setEffect(of: window, radius: radius, grayscale: isGrayscale)
             // The menu bar and the Dock stay sharp.
@@ -159,7 +187,8 @@ private extension NSScreen {
 
 /// A click-through window covering a screen that blurs what is behind it, only inside its `BlurMask` area.
 private enum BlurWindow {
-    static func make(for screen: NSScreen, onFullScreenSpaces: Bool) -> NSWindow {
+    /// `onAllSpaces`: shown on every desktop and full-screen Space; otherwise on the desktop it is first shown on.
+    static func make(for screen: NSScreen, onAllSpaces: Bool) -> NSWindow {
         let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.isOpaque = false
@@ -167,8 +196,8 @@ private enum BlurWindow {
         window.hasShadow = false
         window.ignoresMouseEvents = true
         window.animationBehavior = .none
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        if onFullScreenSpaces { window.collectionBehavior.insert(.fullScreenAuxiliary) }
+        window.collectionBehavior = [.stationary, .ignoresCycle]
+        if onAllSpaces { window.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary]) }
         window.contentView = BlurMask(frame: NSRect(origin: .zero, size: screen.frame.size))
         window.setFrame(screen.frame, display: false)
         return window
