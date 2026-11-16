@@ -48,8 +48,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let blurRadiusKey = "blurRadius"
     private let blur = BackgroundBlur()
     private let blurItem = NSMenuItem(title: "Blur Background Apps on This Desktop", action: #selector(toggleBlur), keyEquivalent: "b")
-    /// ⌘B anywhere turns the blur on and off.
+    /// ⌘ with B pressed twice, anywhere, turns the blur on and off; a single ⌘B is passed on to the frontmost app once
+    /// no second B follows. +/- pressed while ⌘B is held change the blur amount instead.
     private var blurHotKey: HotKey?
+    /// ⌘ plus the main keyboard's and the keypad's + and - keys, registered only while ⌘B is held so apps keep them
+    /// otherwise.
+    private var blurAmountHotKeys: [HotKey] = []
+    /// +/- was pressed during the current ⌘B press, so releasing B does not turn the blur on or off.
+    private var didChangeBlurAmount = false
+    private static let blurAmountStep = 4.0
+    /// Ends the ⌘B press if its release is missed, such as when ⌘ goes up before B.
+    private var blurKeyTimer: Timer?
+    /// Time after a ⌘B release that a second B press turns the blur on or off.
+    private static let blurDoublePressInterval: TimeInterval = 0.3
+    /// A ⌘B release waiting for a second B press; when the timer fires, ⌘B is sent to the app that was frontmost.
+    private var pendingBlurTap: (timer: Timer, app: pid_t)?
+    /// The current ⌘B press is the second of a double press.
+    private var isSecondBlurPress = false
+    private var blurSlider: NSSlider?
     /// While the menu is open, its own key equivalent handles ⌘B.
     private var isMenuOpen = false
     /// Width to height of preview snapshots.
@@ -89,9 +105,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             UserDefaults.standard.removeObject(forKey: Self.legacyBlurKey)
         }
         blur.enabledSpaces = Set(UserDefaults.standard.stringArray(forKey: Self.blurSpacesKey) ?? [])
-        blurHotKey = HotKey(keyCode: kVK_ANSI_B, modifiers: cmdKey) { [weak self] in
+        blurHotKey = HotKey(keyCode: kVK_ANSI_B, modifiers: cmdKey, onRelease: { [weak self] in
+            self?.blurKeyReleased()
+        }) { [weak self] in
             guard let self, !self.isMenuOpen else { return }
-            self.toggleBlur()
+            self.blurKeyPressed()
         }
         dockPreview.isEnabled = UserDefaults.standard.bool(forKey: Self.dockPreviewsKey)
         if dockPreview.isEnabled || controller.showsPreviews { requestScreenRecording() }
@@ -213,15 +231,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         slider.autoresizingMask = [.width]
         view.autoresizingMask = [.width]
         view.addSubview(slider)
+        blurSlider = slider
         let item = NSMenuItem()
         item.view = view
         return item
     }
 
     @objc private func blurRadiusChanged(_ sender: NSSlider) {
-        blur.radius = sender.doubleValue
-        controller.blur.radius = sender.doubleValue
-        UserDefaults.standard.set(sender.doubleValue, forKey: Self.blurRadiusKey)
+        setBlurRadius(sender.doubleValue)
+    }
+
+    private func setBlurRadius(_ radius: Double) {
+        blur.radius = radius
+        controller.blur.radius = radius
+        blurSlider?.doubleValue = radius
+        UserDefaults.standard.set(radius, forKey: Self.blurRadiusKey)
+    }
+
+    private func blurKeyPressed() {
+        // B repeats while held.
+        guard blurAmountHotKeys.isEmpty else { return }
+        didChangeBlurAmount = false
+        if let pendingBlurTap {
+            pendingBlurTap.timer.invalidate()
+            isSecondBlurPress = true
+        }
+        let keys = [(kVK_ANSI_Equal, 1.0), (kVK_ANSI_KeypadPlus, 1.0), (kVK_ANSI_Minus, -1.0), (kVK_ANSI_KeypadMinus, -1.0)]
+        // + on the main keyboard is typed with or without ⇧.
+        blurAmountHotKeys = keys.flatMap { code, sign in
+            [cmdKey, cmdKey | shiftKey].map { modifiers in
+                HotKey(keyCode: code, modifiers: modifiers) { [weak self] in self?.changeBlurAmount(by: sign * Self.blurAmountStep) }
+            }
+        }
+        blurKeyTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            if !Self.isBlurKeyDown { self?.blurKeyReleased() }
+        }
+    }
+
+    private func blurKeyReleased() {
+        guard !blurAmountHotKeys.isEmpty else { return }
+        blurAmountHotKeys = []
+        blurKeyTimer?.invalidate()
+        blurKeyTimer = nil
+        if didChangeBlurAmount || isSecondBlurPress {
+            if !didChangeBlurAmount { toggleBlur() }
+            pendingBlurTap = nil
+            isSecondBlurPress = false
+            return
+        }
+        guard let app = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.blurDoublePressInterval, repeats: false) { [weak self] _ in
+            self?.pendingBlurTap = nil
+            Self.sendCommandB(to: app)
+        }
+        pendingBlurTap = (timer, app)
+    }
+
+    /// Posted to the app directly, so the ⌘B hot key does not catch it.
+    private static func sendCommandB(to app: pid_t) {
+        for isDown in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(kVK_ANSI_B), keyDown: isDown) else { continue }
+            event.flags = .maskCommand
+            event.postToPid(app)
+        }
+    }
+
+    private static var isBlurKeyDown: Bool { CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_ANSI_B)) }
+
+    /// Also turns the blur on for the current desktop, so the change is visible.
+    private func changeBlurAmount(by delta: Double) {
+        didChangeBlurAmount = true
+        let range = BackgroundBlur.radiusRange
+        setBlurRadius(min(max(blur.radius + delta, range.lowerBound), range.upperBound))
+        if let space = WindowScanner.activeSpace(), !blur.enabledSpaces.contains(space) { toggleBlur() }
     }
 
     @objc private func toggleBlurDesktop() {

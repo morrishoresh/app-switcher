@@ -41,7 +41,7 @@ Icons are the size of the built-in switcher's icons (128 pt), and previews of ap
 
 With Blur All Apps (menu-bar menu, under ⌘⇥ Switcher, on by default) on, the windows of all apps behind the switcher are blurred while it is open.
 
-With Blur Background Apps on This Desktop (menu-bar menu) on, the windows of every app except the frontmost one are blurred; the frontmost app's windows that are in front of all others stay sharp. The slider below it sets the amount of blur, and Grayscale (below the slider) also removes the color of the blurred windows, for both. It is turned on and off for each desktop (Space) separately; ⌘B, in any app, turns it on and off for the current desktop; apps no longer get ⌘B (Bold, Show Bookmarks). Full-screen windows are not blurred. Neither blur covers the menu bar or the Dock, nor the desktop unless Blur Desktop (below Grayscale) is on.
+With Blur Background Apps on This Desktop (menu-bar menu) on, the windows of every app except the frontmost one are blurred; the frontmost app's windows that are in front of all others stay sharp. The slider below it sets the amount of blur, and Grayscale (below the slider) also removes the color of the blurred windows, for both. It is turned on and off for each desktop (Space) separately; ⌘ with B pressed twice, in any app, turns it on and off for the current desktop; a single ⌘B still reaches the app (Bold, Show Bookmarks), 0.3 s late. Holding ⌘B and pressing + or - (main keyboard or keypad) increases or decreases the blur amount instead, and turns the blur on for the current desktop if it is off. Full-screen windows are not blurred. Neither blur covers the menu bar or the Dock, nor the desktop unless Blur Desktop (below Grayscale) is on.
 
 ## Dock previews
 
