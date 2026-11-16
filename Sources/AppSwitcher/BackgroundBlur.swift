@@ -99,7 +99,7 @@ final class BackgroundBlur {
     /// Orders the current desktop's blur windows right below the frontmost app's front windows and limits the blur to
     /// the windows behind them, or hides the blur windows if the app has no window on screen.
     private func update() {
-        guard timer != nil, let front = NSWorkspace.shared.frontmostApplication?.processIdentifier, front != ownPID else { return }
+        guard timer != nil, let reported = NSWorkspace.shared.frontmostApplication, reported.processIdentifier != ownPID else { return }
         // On a full-screen Space the blur window is shown over the full-screen window whatever its order, so screens
         // showing one get no blur; nothing behind a full-screen window is visible anyway.
         let current = WindowScanner.currentSpaces()
@@ -122,6 +122,10 @@ final class BackgroundBlur {
             guard let id = window[kCGWindowNumber as String] as? UInt32 else { return false }
             return pid(window) == ownPID || !current.fullScreenWindows.contains(id)
         }
+        // Launched with `open`, AppSwitcher sees loginwindow as frontmost until the next app switch; the frontmost
+        // window's app is front then.
+        let front = reported.activationPolicy == .regular ? reported.processIdentifier
+            : normal.lazy.compactMap(pid).first { $0 != ownPID } ?? reported.processIdentifier
         // The run of the front app's windows starting at its frontmost one; the blur windows inside it are skipped.
         guard !shown.isEmpty, let first = normal.firstIndex(where: { pid($0) == front }) else {
             shown.forEach { $0.orderOut(nil) }
