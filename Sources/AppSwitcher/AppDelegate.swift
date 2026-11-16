@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let switcherBlurItem = NSMenuItem(title: "Blur All Apps", action: #selector(toggleSwitcherBlur), keyEquivalent: "")
     private static let blurRadiusKey = "blurRadius"
     private let blur = BackgroundBlur()
-    private let blurItem = NSMenuItem(title: "Blur Background Apps on This Desktop", action: #selector(toggleBlur), keyEquivalent: "b")
+    private let blurItem = NSMenuItem(title: "Blur Background Apps on This Desktop", action: #selector(toggleBlur), keyEquivalent: "")
     /// ⌘ with B pressed twice, anywhere, turns the blur on and off; a single ⌘B is passed on to the frontmost app once
     /// no second B follows. +/- pressed while ⌘B is held change the blur amount instead.
     private var blurHotKey: HotKey?
@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The current ⌘B press is the second of a double press.
     private var isSecondBlurPress = false
     private var blurSlider: NSSlider?
-    /// While the menu is open, its own key equivalent handles ⌘B.
+    /// ⌘B is ignored while the menu is open.
     private var isMenuOpen = false
     /// Width to height of preview snapshots.
     private static let previewAspect = 0.625
@@ -150,6 +150,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         eachWindowItem.target = self
         eachWindowItem.indentationLevel = 1
         blurItem.target = self
+        // A key equivalent cannot show a double press, so the shortcut is part of the title.
+        let blurTitle = NSMutableAttributedString(string: blurItem.title + "   ")
+        blurTitle.append(NSAttributedString(string: "⌘B B", attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+        blurItem.attributedTitle = blurTitle
         switcherBlurItem.target = self
         grayscaleItem.target = self
         grayscaleItem.indentationLevel = 1
