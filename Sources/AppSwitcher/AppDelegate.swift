@@ -57,6 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// +/- was pressed during the current ⌘B press, so releasing B does not turn the blur on or off.
     private var didChangeBlurAmount = false
     private static let blurAmountStep = 4.0
+    /// The last + or - press while ⌘B is held: whether it was +, and when. The same key pressed again within
+    /// `blurDoublePressInterval` sets the blur amount to its maximum or minimum.
+    private var lastBlurAmountPress: (isIncrease: Bool, at: Date)?
     /// Ends the ⌘B press if its release is missed, such as when ⌘ goes up before B.
     private var blurKeyTimer: Timer?
     /// Time after a ⌘B release that a second B press turns the blur on or off.
@@ -306,7 +309,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func changeBlurAmount(by delta: Double) {
         didChangeBlurAmount = true
         let range = BackgroundBlur.radiusRange
-        setBlurRadius(min(max(blur.radius + delta, range.lowerBound), range.upperBound))
+        let isIncrease = delta > 0
+        let now = Date()
+        if let last = lastBlurAmountPress, last.isIncrease == isIncrease,
+           now.timeIntervalSince(last.at) <= Self.blurDoublePressInterval {
+            setBlurRadius(isIncrease ? range.upperBound : range.lowerBound)
+        } else {
+            setBlurRadius(min(max(blur.radius + delta, range.lowerBound), range.upperBound))
+        }
+        lastBlurAmountPress = (isIncrease, now)
         if let space = WindowScanner.activeSpace(), !blur.enabledSpaces.contains(space) { toggleBlur() }
     }
 
