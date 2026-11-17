@@ -2,7 +2,7 @@ import AppKit
 
 /// Blurs the windows of all apps but the frontmost one, on the desktops it is turned on for: a click-through window per
 /// screen and desktop, ordered right below the frontmost app's windows that are in front of all other windows, that
-/// blurs only where the windows behind are.
+/// blurs only where the windows behind are. Nothing is blurred while Mission Control or App Exposé is showing.
 final class BackgroundBlur {
     static let radiusRange: ClosedRange<Double> = 2...60
     /// Window order and frames change without notice (new windows, a window of the front app brought forward); checked
@@ -40,6 +40,7 @@ final class BackgroundBlur {
     private var windows: [Place: NSWindow] = [:]
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
+    private let missionControl = MissionControlObserver()
     private let ownPID = ProcessInfo.processInfo.processIdentifier
 
     private func start() {
@@ -55,6 +56,8 @@ final class BackgroundBlur {
                 self?.update()
             },
         ]
+        missionControl.onShow = { [weak self] in self?.update() }
+        missionControl.start()
         timer = Timer.scheduledTimer(withTimeInterval: Self.checkInterval, repeats: true) { [weak self] _ in self?.update() }
         update()
     }
@@ -62,6 +65,7 @@ final class BackgroundBlur {
     private func stop() {
         timer?.invalidate()
         timer = nil
+        missionControl.stop()
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0); NotificationCenter.default.removeObserver($0) }
         observers = []
         removeAllWindows()
@@ -100,6 +104,12 @@ final class BackgroundBlur {
     /// the windows behind them, or hides the blur windows if the app has no window on screen.
     private func update() {
         guard timer != nil, let reported = NSWorkspace.shared.frontmostApplication, reported.processIdentifier != ownPID else { return }
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        // The blur windows stay in place in Mission Control, over the windows it spreads out.
+        guard !missionControl.isShown(in: list) else {
+            windows.values.forEach { $0.orderOut(nil) }
+            return
+        }
         // On a full-screen Space the blur window is shown over the full-screen window whatever its order, so screens
         // showing one get no blur; nothing behind a full-screen window is visible anyway.
         let current = WindowScanner.currentSpaces()
@@ -115,7 +125,6 @@ final class BackgroundBlur {
                 window.orderOut(nil)
             }
         }
-        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let pid = { (window: [String: Any]) in window[kCGWindowOwnerPID as String] as? pid_t }
         let normal = list.filter { window in
             guard (window[kCGWindowLayer as String] as? Int) == 0 else { return false }
