@@ -1,15 +1,14 @@
 import AppKit
 
 /// Row of apps with the selected app's name underneath, centered on the screen with the pointer. Each app is its icon,
-/// or with previews on, a snapshot of its front window badged with its icon, the selected one larger than the rest.
+/// or with previews on, a snapshot of its front window badged with its icon, the selected one sized apart from the rest.
 final class SwitcherPanel: NSPanel {
     var onHover: ((Int) -> Void)?
     var onClick: ((Int) -> Void)?
 
     private static let margin: CGFloat = 16
     private static let labelHeight: CGFloat = 26
-    /// Icon size of the built-in ⌘⇥ switcher. Icons and the previews of not-selected apps never get smaller; apps
-    /// wrap onto another row instead.
+    /// Icon size of the built-in ⌘⇥ switcher. Icons never get smaller; apps wrap onto another row instead.
     private static let standardIconSize: CGFloat = 128
     private static let iconInset: CGFloat = 10
     private static let cornerRadius: CGFloat = 20
@@ -72,19 +71,29 @@ final class SwitcherPanel: NSPanel {
         let inset = 2 * Self.iconInset
         let perRowLimit = Self.appsPerRow > 0 ? Self.appsPerRow : Int.max
 
-        // Apps wrap onto more rows past the set number per row, or once they would get smaller than the minimum.
+        // Apps wrap onto more rows past the set number per row, or once the row is full.
         if showsPreviews {
-            // The selected app keeps its set size, up to half the row; the rest share what is left, at most
-            // `previewScale` of it. Exactly one row holds the selected app, so the panel size does not change with it.
+            // The selected app has its set size, up to half the row, and the others are always `previewScale` of it.
+            // When they do not fit in 90% of the screen at that size, all of them get smaller together.
+            // Exactly one row holds the selected app, so the panel size does not change with it.
             let aspect = Self.previewSize.height / Self.previewSize.width
-            let largeWidth = min(Self.previewSize.width, available * Self.maxSelectedShare - inset)
-            let rest = available - largeWidth - inset
-            // A preview is at least as tall as a standard icon, so an app shown by its icon gets the standard size.
-            let minSmallWidth = Self.standardIconSize / aspect
-            let fitting = 1 + max(0, Int(rest / (minSmallWidth + inset)))
-            columns = max(1, min(entries.count, perRowLimit, fitting))
-            let room = columns > 1 ? rest / CGFloat(columns - 1) - inset : .greatestFiniteMagnitude
-            let smallWidth = max(minSmallWidth, min(largeWidth * Self.previewScale, room))
+            let scale = Self.previewScale
+            let availableHeight = visible.height * 0.9 - 2 * m - Self.labelHeight
+            let maxWidth = min(Self.previewSize.width, available * Self.maxSelectedShare - inset)
+            // Largest width of the selected preview that fits with `columns` apps per row.
+            func fittingWidth(columns: Int) -> CGFloat {
+                let perRow = CGFloat(columns)
+                let rowCount = CGFloat((entries.count + columns - 1) / columns)
+                let byWidth = (available - perRow * inset) / (1 + (perRow - 1) * scale)
+                let byHeight = (availableHeight - rowCount * inset) / (aspect * (1 + (rowCount - 1) * scale))
+                return min(maxWidth, byWidth, byHeight)
+            }
+            // The largest size; of those, the most apps per row.
+            columns = (1...max(1, min(entries.count, perRowLimit))).max {
+                (fittingWidth(columns: $0), $0) < (fittingWidth(columns: $1), $1)
+            } ?? 1
+            let largeWidth = fittingWidth(columns: columns)
+            let smallWidth = largeWidth * scale
             largeCell = NSSize(width: largeWidth + inset, height: largeWidth * aspect + inset)
             smallCell = NSSize(width: smallWidth + inset, height: smallWidth * aspect + inset)
         } else {

@@ -33,9 +33,9 @@ With Show Apps Without Windows (menu-bar menu) on, they are listed too, faded, i
 
 ## Window previews
 
-With Show Window Previews (menu-bar menu, under ⌘⇥ Switcher) on, each app is shown as a snapshot of its front window with its icon in the corner, and the selected app is larger than the rest. Selected Preview Size and Other Previews Size (same menu) set their sizes. Snapshots need Screen Recording access. Apps whose windows are all minimized or hidden show their last snapshot, or their icon if none was taken yet.
+With Show Window Previews (menu-bar menu, under ⌘⇥ Switcher) on, each app is shown as a snapshot of its front window with its icon in the corner. Selected Preview Size and Other Previews Size (same menu) set the sizes of the selected app and the rest. Snapshots need Screen Recording access. Apps whose windows are all minimized or hidden show their last snapshot, or their icon if none was taken yet.
 
-Icons are the size of the built-in switcher's icons (128 pt), and previews of apps that are not selected are never shorter than that; apps wrap onto more rows instead, and also past the number set in Apps per Row (same menu).
+Icons are the size of the built-in switcher's icons (128 pt); apps wrap onto more rows instead of getting smaller, and also past the number set in Apps per Row (same menu). Previews of apps that are not selected are always the Other Previews Size share of the selected one; when the previews do not fit in 90% of the screen at the set size, all of them get smaller together.
 
 ## Background blur
 
